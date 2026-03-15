@@ -1,0 +1,48 @@
+/* Torch OS Theme Colors
+   Primary: #ff4500 (torch orange)
+   Flame:   #ff6a00 (flame orange)
+   Ember:   #2b0a00 (dark ember)
+   BG:      #111111 (dark background)
+*/
+
+.panel-top {
+    background-color: #111111;
+    border-bottom: 2px solid #ff4500;
+}
+
+.menu {
+    background-color: #111111;
+    color: #ffffff;
+}
+
+.menu-item:selected {
+    background-color: #ff4500;
+}
+
+.window-list-item-box:active,
+.window-list-item-box:checked {
+    border-bottom: 2px solid #ff6a00;
+}
+
+/* Minimal GTK overrides */
+GtkWindow {
+    background-color: #111111;
+    color: #ffffff;
+}
+
+.button {
+    background-image: none;
+    background-color: #2b0a00;
+    border: 1px solid #ff4500;
+    color: #ffffff;
+}
+
+.button:hover {
+    background-color: #ff4500;
+}
+
+.entry {
+    background-color: #000000;
+    border: 1px solid #ff6a00;
+    color: #ffffff;
+}

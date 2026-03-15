@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Torch Labs Manager
+Comment=Manage disposable research environments
+Exec=python3 /usr/local/bin/torch-labs-gui.py
+Icon=/usr/share/torch/logo.png
+Terminal=false
+Type=Application
+Categories=Development;
+StartupNotify=true

@@ -1,0 +1,18 @@
+#!/bin/bash
+# Mock nvidia-smi for Torch OS testing on non-GPU hardware
+
+echo "NVIDIA-SMI 550.54.14    Driver Version: 550.54.14    CUDA Version: 12.4"
+echo "-------------------------------+------------------------+----------------------+"
+echo "| GPU  Name          Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |"
+echo "| Fan  Temp   Perf          Pwr:Usage/Cap |                Memory-Usage | Compute M. |"
+echo "|                               |                        |               MIG M. |"
+echo "|===============================+========================+======================|"
+echo "|   0  RTX 4090 Mock          Off | 00000000:01:00.0  Off |                  Off |"
+echo "|  0%   35C    P8              10W / 450W |      0MiB / 24576MiB |      Default |"
+echo "|                               |                        |                  N/A |"
+echo "+-------------------------------+------------------------+----------------------+"
+
+# Handle query-gpu flag for torch gpu status command
+if [[ "$*" == *"--query-gpu=name,memory.total,driver_version"* ]]; then
+    echo "RTX 4090 Mock, 24576, 550.54.14"
+fi
