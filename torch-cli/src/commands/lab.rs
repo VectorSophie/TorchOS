@@ -54,6 +54,33 @@ pub fn reset(name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn commit(name: &str) -> Result<()> {
+    let lab_path = get_lab_path(name);
+    let base_path = Path::new(BASE_LAB);
+
+    if !lab_path.exists() {
+        anyhow::bail!("Lab '{}' does not exist", name);
+    }
+
+    println!("Committing changes from lab '{}' to base-lab...", name);
+
+    if !base_path.exists() {
+        anyhow::bail!("Base-lab not found at {}. Cannot commit.", BASE_LAB);
+    }
+
+    let tmp_base = Path::new("/torch/base-lab-tmp");
+    if tmp_base.exists() {
+        btrfs::delete_subvolume(tmp_base)?;
+    }
+
+    btrfs::create_snapshot(&lab_path, tmp_base)?;
+    btrfs::delete_subvolume(base_path)?;
+    fs::rename(tmp_base, base_path).context("Failed to promote lab to base-lab")?;
+
+    println!("Lab '{}' has been committed as the new base-lab.", name);
+    Ok(())
+}
+
 pub fn list() -> Result<()> {
     let labs_dir = Path::new(LABS_DIR);
     if !labs_dir.exists() {

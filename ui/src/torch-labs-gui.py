@@ -57,6 +57,14 @@ class TorchLabsManager(Gtk.Window):
         self.btn_reset.connect("clicked", self.on_reset_clicked)
         actions_box.pack_start(self.btn_reset, False, False, 0)
 
+        self.btn_commit = Gtk.Button(label="Commit Lab")
+        self.btn_commit.connect("clicked", self.on_commit_clicked)
+        actions_box.pack_start(self.btn_commit, False, False, 0)
+
+        self.btn_jupyter = Gtk.Button(label="Launch Jupyter")
+        self.btn_jupyter.connect("clicked", self.on_jupyter_clicked)
+        actions_box.pack_start(self.btn_jupyter, False, False, 0)
+
         self.btn_delete = Gtk.Button(label="Delete Lab")
         self.btn_delete.connect("clicked", self.on_delete_clicked)
         actions_box.pack_start(self.btn_delete, False, False, 0)
@@ -103,6 +111,8 @@ class TorchLabsManager(Gtk.Window):
     def update_button_sensitivity(self, sensitive):
         self.btn_enter.set_sensitive(sensitive)
         self.btn_reset.set_sensitive(sensitive)
+        self.btn_commit.set_sensitive(sensitive)
+        self.btn_jupyter.set_sensitive(sensitive)
         self.btn_delete.set_sensitive(sensitive)
 
     def on_create_clicked(self, widget):
@@ -140,6 +150,48 @@ class TorchLabsManager(Gtk.Window):
             lab_name = model[treeiter][0]
             subprocess.run(["torch", "lab", "reset", lab_name])
             self.update_info(lab_name)
+
+    def on_commit_clicked(self, widget):
+        model, treeiter = self.treeview.get_selection().get_selected()
+        if treeiter is not None:
+            lab_name = model[treeiter][0]
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.YES_NO,
+                text="Commit Lab Changes",
+            )
+            dialog.format_secondary_text(
+                f"Are you sure you want to commit '{lab_name}' as the new base-lab? "
+                "This will overwrite the current base-lab for all future environments."
+            )
+            response = dialog.run()
+            if response == Gtk.ResponseType.YES:
+                subprocess.run(["torch", "lab", "commit", lab_name])
+                self.update_info(lab_name)
+            dialog.destroy()
+
+    def on_jupyter_clicked(self, widget):
+        model, treeiter = self.treeview.get_selection().get_selected()
+        if treeiter is not None:
+            lab_name = model[treeiter][0]
+            # Launching jupyter inside the container via nspawn
+            subprocess.Popen(
+                [
+                    "gnome-terminal",
+                    "--",
+                    "torch",
+                    "lab",
+                    "enter",
+                    lab_name,
+                    "--",
+                    "jupyter",
+                    "notebook",
+                    "--ip=0.0.0.0",
+                    "--allow-root",
+                ]
+            )
 
     def on_delete_clicked(self, widget):
         model, treeiter = self.treeview.get_selection().get_selected()

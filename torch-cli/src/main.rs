@@ -13,6 +13,10 @@ mod system {
     pub mod isolation;
 }
 
+mod ui {
+    pub mod dashboard;
+}
+
 mod types {
     pub mod lab;
 }
@@ -45,15 +49,31 @@ enum Commands {
         #[command(subcommand)]
         action: GpuAction,
     },
+    Top,
 }
 
 #[derive(Subcommand)]
 enum LabAction {
-    Create { name: String },
-    Enter { name: String },
-    Reset { name: String },
-    Delete { name: String },
-    Info { name: String },
+    Create {
+        name: String,
+    },
+    Enter {
+        name: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    Reset {
+        name: String,
+    },
+    Commit {
+        name: String,
+    },
+    Delete {
+        name: String,
+    },
+    Info {
+        name: String,
+    },
     List,
 }
 
@@ -79,8 +99,9 @@ fn main() -> Result<()> {
         Commands::Init => commands::init::run_init()?,
         Commands::Lab { action } => match action {
             LabAction::Create { name } => commands::lab::create(&name)?,
-            LabAction::Enter { name } => system::isolation::enter_isolated(&name)?,
+            LabAction::Enter { name, args } => system::isolation::enter_isolated(&name, args)?,
             LabAction::Reset { name } => commands::lab::reset(&name)?,
+            LabAction::Commit { name } => commands::lab::commit(&name)?,
             LabAction::Delete { name } => commands::lab::delete(&name)?,
             LabAction::Info { name } => commands::lab::info(&name)?,
             LabAction::List => commands::lab::list()?,
@@ -94,6 +115,7 @@ fn main() -> Result<()> {
         Commands::Gpu { action } => match action {
             GpuAction::Status => system::gpu_detect::get_gpu_status()?,
         },
+        Commands::Top => ui::dashboard::run_top()?,
     }
 
     Ok(())

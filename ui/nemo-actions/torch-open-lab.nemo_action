@@ -1,0 +1,9 @@
+[Nemo Action]
+Active=true
+Name=Open in Torch Lab
+Comment=Open this directory as a disposable AI research lab
+Exec=torch-labs-gui.py --path %F
+Icon-Name=torch-logo
+Selection=any
+Extensions=dir;
+Categories=Development;
