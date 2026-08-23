@@ -147,6 +147,15 @@ Categorized per subsystem, per the VibeOS research recommendation (a flat list g
   — boots and runs Hyprland as a real process, just not visually verifiable until the `kvm`-group unlock
   above happens. Not a regression from the working boot state established earlier in this doc; a
   separate, later layer on top of it.
+- **This is a real, currently-open upstream issue, not just a local misconfiguration** — confirmed via
+  [hyprwm/aquamarine#109](https://github.com/hyprwm/aquamarine/issues/109), same exact symptom (black
+  screen, no errors, Hyprland 0.45+/aquamarine 5.0+ specifically inside a QEMU VM). The only reported
+  workaround there is downgrading to aquamarine 0.4.3 + Hyprland 0.45.0 — many major versions behind
+  what CachyOS currently ships (0.56.2/0.14.0 here), and reported as a personal workaround pending an
+  upstream fix, not a confirmed universal one. **Deliberately not attempted**: a downgrade that deep
+  risks dependency conflicts across the whole freshly-installed Hyprland ecosystem (waybar, portal,
+  wayland libs all built against current versions) for an unconfirmed payoff — the `kvm`-group +
+  `blob=true` path above is the lower-risk, higher-confidence fix and should be tried first.
 
 ### bootloader
 - **Limine 12.6.0 `bios-install` fails against this exact QEMU+virtio-blk combination** — throws
