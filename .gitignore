@@ -1,0 +1,5 @@
+# VM build artifacts — large binaries, never committed
+image/vm/*.iso
+image/vm/*.qcow2
+image/vm/*.img
+image/vm/seed/
