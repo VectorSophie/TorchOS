@@ -3,3 +3,6 @@ image/vm/*.iso
 image/vm/*.qcow2
 image/vm/*.img
 image/vm/seed/
+image/vm/*.ppm
+image/vm/*.png
+image/vm/monitor.sock
