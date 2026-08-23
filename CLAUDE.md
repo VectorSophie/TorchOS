@@ -64,9 +64,19 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       verification blocked** by a QEMU/host permission gap, not a Hyprland problem — see Gotchas
       (`/dev/udmabuf` needs one more one-time sudo command). Omarchy's actual Quickshell-based shell
       not yet forked in — this is a plain Hyprland+waybar baseline, polish/Omarchy-parity is follow-up.
-- [ ] Phase 1: `torch` CLI skeleton scaffolded
-- [ ] Phase 1: basic structured diagnostics wired up
-- [ ] Phase 1: grub-btrfs installed + boot-menu snapshot entries verified
+- [x] Phase 1: `torch` CLI skeleton scaffolded — real Rust binary at `torch/` (clap-based), not a stub:
+      `status`, `doctor`, `gpu`, `snapshot list/create`, `diagnose` (structured JSON). Every command
+      shells out directly (snapper/systemctl/lspci/uname) as a deliberate Phase 1 stopgap — see the
+      note at the top of `torch/src/main.rs` — to become a `torchd` client in Phase 2. Built and run
+      successfully both on this dev host (correctly reports it's *not* a TorchOS box) and natively
+      inside the VM (`doctor` fully green, `snapshot create` produced a real verified checkpoint).
+- [x] Phase 1: basic structured diagnostics wired up — `torch diagnose` emits JSON (kernel, hostname,
+      root fstype, GPU, failed systemd units, available memory), validated as parseable JSON and
+      cross-checked for correct values on both the dev host and the VM.
+- [ ] Phase 1: grub-btrfs installed + boot-menu snapshot entries verified (CLI recovery path is fully
+      proven; the boot-menu integration layer on top of it isn't installed yet)
+- [ ] Phase 1: Hyprland visually verified (blocked on the `/dev/udmabuf` permission gap — needs
+      `sudo usermod -aG kvm $USER` + fresh session, see Gotchas)
 - [ ] Phase 1 implementation plan formally written (`writing-plans`) — went straight to execution
       instead, per the `/goal` directive; worth writing retroactively if this needs to be resumed
       by a fresh session
