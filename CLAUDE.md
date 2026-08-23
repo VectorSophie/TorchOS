@@ -57,7 +57,13 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       created correctly (nested under `@`, see Gotchas), a labeled checkpoint→change→`snapper status`
       diff cycle ran end-to-end and correctly showed the change. grub-btrfs boot-menu integration and
       Btrfs Assistant GUI not yet installed (CLI recovery path is proven; boot-menu path is not yet).
-- [ ] Phase 1: Omarchy-fork Hyprland desktop provisioned
+- [x] Phase 1: Hyprland desktop packages installed and provisioned (Hyprland, hypridle, hyprlock,
+      hyprpaper, waybar, wofi, kitty, xdg-desktop-portal-hyprland, polkit-gnome, pipewire stack),
+      tty1 auto-login + auto-start configured, process confirmed running (`ps` shows `Hyprland` +
+      `waybar` alive, real `hyprctl monitors` output, correct seat0 session via `loginctl`). **Visual
+      verification blocked** by a QEMU/host permission gap, not a Hyprland problem — see Gotchas
+      (`/dev/udmabuf` needs one more one-time sudo command). Omarchy's actual Quickshell-based shell
+      not yet forked in — this is a plain Hyprland+waybar baseline, polish/Omarchy-parity is follow-up.
 - [ ] Phase 1: `torch` CLI skeleton scaffolded
 - [ ] Phase 1: basic structured diagnostics wired up
 - [ ] Phase 1: grub-btrfs installed + boot-menu snapshot entries verified
@@ -99,6 +105,36 @@ Categorized per subsystem, per the VibeOS research recommendation (a flat list g
   screendump after a boot/login as ground truth without one more check.
 - Host RAM is genuinely tight even with nothing VM-related running (this is a shared dev/desktop
   machine, not dedicated) — 2GB for the VM is the realistic ceiling, not the earlier-assumed 3GB.
+
+### gpu / hyprland-in-vm
+- **Hyprland runs but fails to actually render** in this VM (`ps` shows it alive, but `hyprctl monitors`
+  detects both virtual outputs correctly, `screendump`/VNC show solid black, and `grim` — an in-session
+  screenshot tool — hangs indefinitely rather than producing a file). The guest's `hyprland.log` fills
+  with a repeating `CRIT from aquamarine: [EGL] Command eglCreateImageKHR errored out with
+  EGL_BAD_ALLOC: createImageFromDmaBufs failed`. This is aquamarine's DRM/KMS buffer-sharing layer, not
+  Mesa's GL dispatch — `LIBGL_ALWAYS_SOFTWARE=1` and `cursor { no_hardware_cursors = true }` both had
+  no effect, confirming that.
+- **Root cause, actually diagnosed (not guessed)**: `dmesg` on the guest shows
+  `[drm] features: +virgl +edid -resource_blob -host_visible` — the virtio-gpu device is missing the
+  `resource_blob`/blob-resource feature DMA-BUF sharing depends on. Fixing this means launching QEMU
+  with `-device virtio-gpu-gl-pci,blob=true,hostmem=256M` (plus a `memory-backend-memfd` object) instead
+  of plain `virtio-gpu-pci`.
+- **That fix needs one more thing this host can't self-grant**: `blob=true` requires the QEMU process to
+  open `/dev/udmabuf`, which is `crw-rw---- root:kvm` with **no ACL** (unlike `/dev/kvm`, which already
+  has one granting direct access — see Environment notes). The owning session's user isn't in the `kvm`
+  group, so this fails with a clean `Permission denied` — genuinely blocked on a one-time sudo action,
+  not something to keep working around. **Exact unlock, when the owner is available to run it**:
+  `sudo usermod -aG kvm $USER` (then a fresh login/new session — group changes don't apply retroactively
+  to an already-open session, same as the original `/dev/kvm` ACL lesson). Once granted, relaunch with
+  `-object memory-backend-memfd,id=mem1,size=2048M -machine memory-backend=mem1 -device
+  virtio-gpu-gl-pci,blob=true,hostmem=256M -display egl-headless` and re-verify with `grim` from inside
+  the session (`export XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1; grim
+  /tmp/shot.png`) rather than QEMU's own `screendump`, which does not reflect the `egl-headless` render
+  path reliably even when rendering itself is healthy.
+- Current VM launch therefore reverted to plain `-device virtio-gpu-pci` (no `-gl`, no `egl-headless`)
+  — boots and runs Hyprland as a real process, just not visually verifiable until the `kvm`-group unlock
+  above happens. Not a regression from the working boot state established earlier in this doc; a
+  separate, later layer on top of it.
 
 ### bootloader
 - **Limine 12.6.0 `bios-install` fails against this exact QEMU+virtio-blk combination** — throws
