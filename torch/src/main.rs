@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod commands {
+    pub mod diagnose;
     pub mod doctor;
     pub mod gpu;
     pub mod snapshot;
@@ -33,6 +34,8 @@ enum Commands {
     Doctor,
     /// GPU detection
     Gpu,
+    /// Structured (JSON) system diagnostics — for scripts and the future AI assistant
+    Diagnose,
     /// Btrfs/Snapper snapshot management
     Snapshot {
         #[command(subcommand)]
@@ -58,6 +61,7 @@ fn main() -> Result<()> {
         Commands::Status => commands::status::run()?,
         Commands::Doctor => commands::doctor::run()?,
         Commands::Gpu => commands::gpu::run()?,
+        Commands::Diagnose => commands::diagnose::run()?,
         Commands::Snapshot { action } => match action {
             SnapshotAction::List => commands::snapshot::list()?,
             SnapshotAction::Create { description } => commands::snapshot::create(&description)?,
