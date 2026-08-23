@@ -73,8 +73,10 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
 - [x] Phase 1: basic structured diagnostics wired up — `torch diagnose` emits JSON (kernel, hostname,
       root fstype, GPU, failed systemd units, available memory), validated as parseable JSON and
       cross-checked for correct values on both the dev host and the VM.
-- [ ] Phase 1: grub-btrfs installed + boot-menu snapshot entries verified (CLI recovery path is fully
-      proven; the boot-menu integration layer on top of it isn't installed yet)
+- [x] Phase 1: grub-btrfs installed + boot-menu snapshot entries verified — `grub-mkconfig` genuinely
+      found and added all 6 real snapshots from this session's actual pacman transactions,
+      `grub-btrfsd` watcher enabled+active for future ones (auto-refreshes the menu on new snapshots,
+      no manual `grub-mkconfig` re-run needed going forward)
 - [ ] Phase 1: Hyprland visually verified (blocked on the `/dev/udmabuf` permission gap — needs
       `sudo usermod -aG kvm $USER` + fresh session, see Gotchas)
 - [ ] Phase 1 implementation plan formally written (`writing-plans`) — went straight to execution
