@@ -77,8 +77,10 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       found and added all 6 real snapshots from this session's actual pacman transactions,
       `grub-btrfsd` watcher enabled+active for future ones (auto-refreshes the menu on new snapshots,
       no manual `grub-mkconfig` re-run needed going forward)
-- [ ] Phase 1: Hyprland visually verified (blocked on the `/dev/udmabuf` permission gap — needs
-      `sudo usermod -aG kvm $USER` + fresh session, see Gotchas)
+- [x] Phase 1: Hyprland visually verified — owner ran `sudo usermod -aG kvm $USER`, `/dev/udmabuf`
+      access confirmed, VM relaunched with blob-resource support, real `grim` screenshots captured
+      showing a rendered desktop (wallpaper, cursor, waybar with live network/battery/clock). The
+      actual working fix differs from the originally-planned one — see Gotchas.
 - [ ] Phase 1 implementation plan formally written (`writing-plans`) — went straight to execution
       instead, per the `/goal` directive; worth writing retroactively if this needs to be resumed
       by a fresh session
@@ -156,6 +158,43 @@ Categorized per subsystem, per the VibeOS research recommendation (a flat list g
   risks dependency conflicts across the whole freshly-installed Hyprland ecosystem (waybar, portal,
   wayland libs all built against current versions) for an unconfirmed payoff — the `kvm`-group +
   `blob=true` path above is the lower-risk, higher-confidence fix and should be tried first.
+- **RESOLVED 2026-08-24**: owner ran `sudo usermod -aG kvm $USER` + fresh session; `/dev/udmabuf`
+  confirmed accessible (`cat` gives `Invalid argument`, not `Permission denied` — that's the expected
+  result of a plain read on a udmabuf fd, not a failure). But the actually-working launch config turned
+  out **different** from the plan above in two ways, both worth remembering:
+  - `-device virtio-gpu-gl-pci,help` (and any use of that device on this specific host's QEMU 8.2.2
+    Ubuntu package) fails to load: `undefined symbol: qemu_egl_display`. Root cause: this Ubuntu build
+    splits GL support across separate modules (`ui-opengl.so` defines the symbol, `ui-egl-headless.so`
+    and `hw-display-virtio-gpu-gl.so` both need it) with no dependency-driven load order — a `,help`
+    query hits this every time, but a real launch can still work if `-display egl-headless` happens to
+    load `ui-opengl.so` first. Separately, even when the module *did* load, `virtio-gpu-gl-pci` defaults
+    virgl on, and `blob=true` + virgl is currently rejected outright: `blobs and virgl are not
+    compatible (yet)`. `virtio-gpu-gl-pci` has no `virgl=` property to turn it off either.
+  - **The fix that actually worked**: skip `-gl` entirely. Plain **`-device
+    virtio-gpu-pci,blob=true,hostmem=256M`** (the *non*-GL device) has its own `blob`/`hostmem`
+    properties, needs no `-display egl-headless`, and doesn't touch virgl at all — DMA-BUF/blob-resource
+    sharing (what aquamarine's DRM/KMS layer actually needs) is independent of virgl 3D passthrough.
+    `dmesg` confirms: `[drm] features: -virgl +edid +resource_blob +host_visible`. Hyprland's log now
+    shows a real GBM/DRM EGL context (`Renderer: llvmpipe`, a full GL extension list) and **zero** `CRIT`
+    lines. `grim` (run as `export XDG_RUNTIME_DIR=/run/user/1000
+    HYPRLAND_INSTANCE_SIGNATURE=$(ls /run/user/1000/hypr/) WAYLAND_DISPLAY=wayland-1; grim
+    /tmp/shot.png`) now exits 0 and produces a real rendered PNG (default Hyprland wallpaper, cursor,
+    keybind-hint box) instead of hanging. Full launch command is in Environment notes below — still
+    needs `-object memory-backend-memfd,...` + `-machine memory-backend=mem1`, just not `-gl`.
+  - **Separately discovered while verifying**: the deployed `~/.config/hypr/hyprland.conf` on the VM was
+    just Hyprland's own auto-generated stub (`# This config is a STUB! This should never be generated.`)
+    — no `exec-once` lines, so waybar/hyprpaper/hypridle never actually autostarted despite being
+    installed. This was never committed anywhere (dotfiles/chezmoi work is still Phase-1-deferred), so
+    it was hand-typed once over SSH and is only real on the live VM disk, not reproducible from the repo
+    yet. Fixed by appending `exec-once = hyprpaper` / `waybar` / `hypridle` to that file and adding a
+    minimal `~/.config/hypr/hypridle.conf` (it has no default and hard-fails with `[CRITICAL]
+    ConfigManager: No hypridle.conf file found` otherwise). `exec-once` only fires at Hyprland's initial
+    launch, not on `hyprctl reload` — verify a config change to it by dispatching the programs manually
+    (`hyprctl dispatch exec <cmd>`) into the running session rather than reloading and expecting them to
+    appear. Confirmed working via a second `grim` capture: waybar rendering real live data (network
+    `10.0.2.15/24` matching the actual QEMU NAT address, battery/clock modules) on both outputs. This
+    config is real but VM-disk-only — worth formalizing into chezmoi-managed dotfiles once that phase
+    starts, so it survives a VM rebuild.
 
 ### bootloader
 - **Limine 12.6.0 `bios-install` fails against this exact QEMU+virtio-blk combination** — throws
@@ -258,18 +297,30 @@ RAM at ~2GB, not the 3GB originally planned or v1's old 8GB default.
 
 The Phase 1 VM lives at `image/vm/torchos-vm.qcow2` (40GB sparse, gitignored) with the CachyOS ISO
 alongside it. Launch command (adjust `-cdrom`/`-boot order=d` only when re-installing from scratch;
-normal boots use `-boot order=c` with no `-cdrom`):
+normal boots use `-boot order=c` with no `-cdrom`) — this is the **GPU-accelerated** form, working as
+of 2026-08-24 now that the owning user is in the `kvm` group (needs a fresh login/session after that
+group grant, see the `gpu / hyprland-in-vm` Gotcha for why plain `virtio-gpu-pci` with `blob=true` is
+used instead of `virtio-gpu-gl-pci`):
 
 ```
-qemu-system-x86_64 -name torchos-vm -enable-kvm -cpu host -m 2048 -smp 2 \
+qemu-system-x86_64 -name torchos-vm -enable-kvm -cpu host -smp 2 \
+  -object memory-backend-memfd,id=mem1,size=2048M -machine memory-backend=mem1 \
   -drive file=image/vm/torchos-vm.qcow2,if=virtio,format=qcow2 -boot order=c \
   -netdev user,id=net0,hostfwd=tcp::2222-:22 -device virtio-net-pci,netdev=net0 \
-  -device virtio-gpu-pci -vnc :1 \
+  -device virtio-gpu-pci,blob=true,hostmem=256M -vnc :1 \
   -serial telnet:127.0.0.1:4555,server,nowait \
   -monitor unix:image/vm/monitor.sock,server,nowait
 ```
 
+(If `/dev/udmabuf` isn't accessible — check with `ls -la /dev/udmabuf` and confirm `kvm` shows in
+`groups` — drop `-object memory-backend-memfd,...`/`-machine memory-backend=mem1` and
+`,blob=true,hostmem=256M` to fall back to the older non-accelerated `-device virtio-gpu-pci` form;
+Hyprland still runs as a real process, just not visually verifiable via `grim`.)
+
 SSH: `ssh -p 2222 torch@localhost` (password `torchos2026` — throwaway, local-NAT-only VM, no need to
-harden). `sudo` works for `torch`. Screenshot the VM anytime via the monitor socket's `screendump`
+harden). `sudo` works for `torch`. This host has no `sshpass`/passwordless-sudo path to install it, so
+scripted SSH here unpacks it from an `apt download`'d `.deb` via `dpkg-deb -x` into a scratch dir rather
+than installing system-wide — same no-root pattern noted for other tools above. Screenshot the VM
+anytime via the monitor socket's `screendump`
 command (writes a `.ppm`; `convert file.ppm file.png` to view with the Read tool) — this is the
 actual way to verify GUI/desktop state later, not just serial/SSH text.
