@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "torch-welcome"]
+
 [package]
 name = "torch"
 version = "0.1.0"
