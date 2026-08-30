@@ -1,0 +1,17 @@
+window.welcome-root {
+    background-color: #ffffff;
+}
+
+.welcome-title {
+    font-size: 20px;
+    font-weight: bold;
+    color: #ff4500;
+}
+
+.welcome-row {
+    color: #2b0a00;
+}
+
+check {
+    color: #ff6a00;
+}
