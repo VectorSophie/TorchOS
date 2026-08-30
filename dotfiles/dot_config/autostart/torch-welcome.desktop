@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=TorchOS Welcome
+Exec=torch-welcome
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
