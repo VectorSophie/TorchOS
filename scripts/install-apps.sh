@@ -20,7 +20,9 @@ snapper create -d "before Group A app bundle install" -u important=yes
 
 BUILD_USER="${SUDO_USER:-torch}"
 
-# Refresh package databases so pacman -Si below reflects reality.
+# Full sync + upgrade (not sync-only) so pacman -Si below reflects reality
+# without leaving the system in a partial-upgrade state (the classic Arch
+# footgun: refreshing the sync DB without upgrading installed packages).
 pacman -Syu --noconfirm
 
 PACMAN_CANDIDATES=(

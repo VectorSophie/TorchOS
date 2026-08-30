@@ -1,4 +1,8 @@
-.welcome-root {
+/* .welcome-root's own box paints white only inside its margins — GTK4
+   margins sit outside the CSS background, so without this the
+   ApplicationWindow's ambient theme background would still show through
+   as a frame around it (caught in Group A's final whole-branch review). */
+window, .welcome-root {
     background-color: #ffffff;
 }
 
