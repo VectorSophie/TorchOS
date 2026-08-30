@@ -21,7 +21,7 @@ snapper create -d "before Group A app bundle install" -u important=yes
 BUILD_USER="${SUDO_USER:-torch}"
 
 # Refresh package databases so pacman -Si below reflects reality.
-pacman -Sy
+pacman -Syu --noconfirm
 
 PACMAN_CANDIDATES=(
   # Shell/CLI quality-of-life
@@ -114,11 +114,15 @@ if [[ ${#AUR[@]} -gt 0 ]]; then
   # script right here. Check yay's own exit code via PIPESTATUS instead
   # of trusting the pipeline's composite status.
   if [[ -n "${YAY_SUDO_PASSWORD:-}" ]]; then
+    # A shell function feeding the pipe (rather than `yes "$pw"`) never puts
+    # the password in a process's own argv — `ps`/`/proc/<pid>/cmdline`
+    # would show the function/subshell, not the literal password.
+    sudo_feed() { while :; do printf '%s\n' "$YAY_SUDO_PASSWORD"; done; }
     # Using `pipeline; then/else` (not `pipeline || true`) so nothing runs
     # between the pipeline and reading PIPESTATUS — even `true` on the far
     # side of `||` counts as its own pipeline and clobbers PIPESTATUS
     # before the next line could read it.
-    if yes "$YAY_SUDO_PASSWORD" | runuser -u "$BUILD_USER" -- yay -S --needed --noconfirm --sudoflags -S "${AUR[@]}"; then
+    if sudo_feed | runuser -u "$BUILD_USER" -- yay -S --needed --noconfirm --sudoflags -S "${AUR[@]}"; then
       :
     else
       yay_status=${PIPESTATUS[1]}
