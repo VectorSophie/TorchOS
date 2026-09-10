@@ -6,6 +6,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 mod protocol;
 mod policy;
 mod audit;
+mod ops;
 
 use protocol::{Request, Response};
 
