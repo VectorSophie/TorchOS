@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "torch-welcome"]
+members = [".", "torch-welcome", "torchd"]
 
 [package]
 name = "torch"
