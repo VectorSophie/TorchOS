@@ -3,9 +3,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 
-mod protocol;
-
-use protocol::{Request, Response};
+use torchd::protocol::{Request, Response};
 
 const SOCKET_DIR: &str = "/run/torchd";
 const SOCKET_PATH: &str = "/run/torchd/torchd.sock";
