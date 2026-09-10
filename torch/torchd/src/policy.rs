@@ -57,15 +57,19 @@ mod tests {
 
     #[test]
     fn denylist_always_wins_regardless_of_tier() {
-        for tier in [Tier::Recommend, Tier::Auto, Tier::Trust] {
-            assert!(matches!(decide("bootloader.modify", tier, true), Decision::Denied(_)));
+        for op in ["bootloader.modify", "partition.modify", "torchd.disable"] {
+            for tier in [Tier::Recommend, Tier::Auto, Tier::Trust] {
+                assert!(matches!(decide(op, tier, true), Decision::Denied(_)));
+            }
         }
     }
 
     #[test]
     fn recommend_tier_never_auto_approves() {
         for op in ["snapshot.create", "package.install", "service.restart", "package.remove", "snapshot.rollback"] {
-            assert_eq!(decide(op, Tier::Recommend, false), Decision::NeedsConfirmation);
+            for has_confirmation in [false, true] {
+                assert_eq!(decide(op, Tier::Recommend, has_confirmation), Decision::NeedsConfirmation);
+            }
         }
     }
 
