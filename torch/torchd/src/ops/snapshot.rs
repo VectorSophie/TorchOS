@@ -1,3 +1,4 @@
+use super::check_name;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::process::Command;
@@ -29,6 +30,7 @@ pub fn create(args: &serde_json::Value) -> Result<String> {
 // caller honestly rather than implying this takes effect immediately.
 pub fn rollback(args: &serde_json::Value) -> Result<String> {
     let args: RollbackArgs = serde_json::from_value(args.clone()).context("bad args for snapshot.rollback")?;
+    check_name(&args.snapshot_id)?;
     let status = Command::new("snapper")
         .args(["-c", "root", "rollback", &args.snapshot_id])
         .status()

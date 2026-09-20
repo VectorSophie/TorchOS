@@ -3,15 +3,18 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 
-mod protocol;
-mod policy;
 mod audit;
 mod ops;
+mod policy;
+mod protocol;
 
-use protocol::{Request, Response};
+use audit::AuditEvent;
+use policy::{decide, Decision, Tier};
+use protocol::{Request, Response, Status};
 
 const SOCKET_DIR: &str = "/run/torchd";
 const SOCKET_PATH: &str = "/run/torchd/torchd.sock";
+const AUDIT_PATH: &str = "/var/log/torchd/audit.jsonl";
 
 fn main() -> Result<()> {
     std::fs::create_dir_all(SOCKET_DIR).with_context(|| format!("creating {SOCKET_DIR}"))?;
@@ -99,6 +102,13 @@ fn handle_client(stream: UnixStream) -> Result<()> {
             return Ok(());
         }
     };
+    let peer_user = std::process::Command::new("id")
+        .args(["-nu", &peer_uid.to_string()])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| peer_uid.to_string());
+
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = stream;
     let mut line = String::new();
@@ -107,12 +117,85 @@ fn handle_client(stream: UnixStream) -> Result<()> {
         return Ok(());
     }
 
-    let response = match serde_json::from_str::<Request>(&line) {
-        Ok(req) => Response::error(&req.request_id, format!("not implemented yet (peer_uid={peer_uid})")),
-        Err(e) => Response::error("unknown", format!("bad request: {e}")),
+    let req: Request = match serde_json::from_str(&line) {
+        Ok(r) => r,
+        Err(e) => {
+            let resp = Response::error("unknown", format!("bad request: {e}"));
+            writeln!(writer, "{}", serde_json::to_string(&resp)?)?;
+            return Ok(());
+        }
     };
 
-    let out = serde_json::to_string(&response)?;
-    writeln!(writer, "{out}")?;
+    // torch CLI is the only Phase 2 client and always runs as Auto.
+    let tier = Tier::Auto;
+    // ponytail: any non-empty confirm_token counts as confirmation; the issued
+    // token is not tracked. Fine while the only client is the local CLI prompting
+    // a human; validate issued tokens before any non-interactive client exists.
+    let has_confirmation = req.confirm_token.as_deref().is_some_and(|t| !t.is_empty());
+    let decision = decide(&req.op, tier, has_confirmation);
+
+    let response = match &decision {
+        Decision::Denied(reason) => Response::denied(&req.request_id, reason.clone()),
+        Decision::NeedsConfirmation => Response::needs_confirmation(
+            &req.request_id,
+            format!("{} requires confirmation — resend with confirm_token set", req.op),
+            uuid::Uuid::new_v4().to_string(),
+        ),
+        Decision::AutoApprove => match run_op(&req.op, &req.args) {
+            Ok(msg) => Response::ok(&req.request_id, msg, None),
+            Err(e) => Response::error(&req.request_id, format!("{e:#}")),
+        },
+    };
+
+    let decision_label = match &decision {
+        Decision::Denied(_) => "denied",
+        Decision::NeedsConfirmation => "needs_confirmation",
+        Decision::AutoApprove => "auto_approved",
+    };
+    let result_label = match response.status {
+        Status::Ok => "ok",
+        Status::Denied => "denied",
+        Status::Error => "error",
+        Status::NeedsConfirmation => "needs_confirmation",
+    };
+    let event = AuditEvent {
+        timestamp: now_utc(),
+        request_id: req.request_id.clone(),
+        peer_uid,
+        peer_user,
+        op: req.op.clone(),
+        args: req.args.clone(),
+        tier: format!("{tier:?}").to_lowercase(),
+        decision: decision_label.to_string(),
+        result: result_label.to_string(),
+        message: response.message.clone(),
+    };
+    if let Err(e) = audit::append(AUDIT_PATH, &event) {
+        eprintln!("audit log write failed: {e:#}");
+    }
+
+    writeln!(writer, "{}", serde_json::to_string(&response)?)?;
     Ok(())
+}
+
+fn run_op(op: &str, args: &serde_json::Value) -> Result<String> {
+    match op {
+        "snapshot.create" => ops::snapshot::create(args),
+        "snapshot.rollback" => ops::snapshot::rollback(args),
+        "package.install" => ops::package::install(args),
+        "package.remove" => ops::package::remove(args),
+        "service.restart" => ops::service::restart(args),
+        other => anyhow::bail!("unknown operation: {other}"),
+    }
+}
+
+// ponytail: shells out to `date` once per request; swap for a time crate if
+// request volume ever matters.
+fn now_utc() -> String {
+    std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
