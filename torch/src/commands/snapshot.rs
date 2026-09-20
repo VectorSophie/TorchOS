@@ -1,10 +1,9 @@
 use anyhow::{bail, Context, Result};
 use std::process::Command;
 
-// PHASE 1 NOTE: wraps `snapper` directly. Phase 2's torchd owns snapshot.rollback as
-// its one hand-built operation class (see CLAUDE.md's Gotchas — no systemd/Snapper
-// D-Bus API exists for this); this command should route through torchd once it
-// exists rather than continue shelling out with root-adjacent snapper permissions.
+use crate::torchd_client;
+
+// `list` is an unprivileged read and stays direct; create/rollback go through torchd.
 
 fn run_snapper(args: &[&str]) -> Result<std::process::ExitStatus> {
     Command::new("snapper")
@@ -23,18 +22,13 @@ pub fn list() -> Result<()> {
 
 pub fn create(description: &str) -> Result<()> {
     println!("Creating checkpoint: {description}");
-    let status = run_snapper(&[
-        "-c",
-        "root",
-        "create",
-        "-d",
-        description,
-        "-u",
-        "important=yes",
-    ])?;
-    if !status.success() {
-        bail!("snapper create failed");
-    }
+    torchd_client::call("snapshot.create", serde_json::json!({"description": description}))?;
     println!("Checkpoint created. Run `torch snapshot list` to see it.");
+    Ok(())
+}
+
+pub fn rollback(snapshot_id: &str) -> Result<()> {
+    let msg = torchd_client::call("snapshot.rollback", serde_json::json!({"snapshot_id": snapshot_id}))?;
+    println!("{msg}");
     Ok(())
 }

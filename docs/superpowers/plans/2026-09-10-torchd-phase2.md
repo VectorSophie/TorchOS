@@ -20,6 +20,19 @@ commands that use it.
 otherwise (`std::os::unix::net::UnixListener`/`UnixStream::peer_cred()`, both stable, no `libc` crate
 needed).
 
+> **STATUS (2026-09-20): all 9 tasks implemented and verified end-to-end in the VM** (systemd-managed
+> daemon, `torch` CLI as client). Deviations from the plan as written, each found by running it:
+> - `torchd.service`: the plan's empty `CapabilityBoundingSet=` breaks torchd's own `chown` of the
+>   socket, and `ProtectSystem=strict`/`RestrictNamespaces`/`MemoryDenyWriteExecute` break real pacman
+>   transactions (children inherit them). Shipped a partial hardening set with an explicit capability
+>   list; `systemd-analyze security` = 6.4 MEDIUM. `RuntimeDirectoryMode` is 0755, not 0750 (0750
+>   root:root blocked `torch-agent` from reaching the 0660 socket; the socket is the access control).
+> - Added `ops::check_name` (option-injection guard) and `--` before package/unit args.
+> - Client uses the server-issued `confirm_token`; the server still accepts any non-empty token
+>   (`ponytail:` in `main.rs`) - validate issued tokens before a non-interactive client exists.
+> - Not yet exercised: an actual `snapshot.rollback` across a reboot (Milestone 5), and `SO_PEERCRED`
+>   rejection of uid 0.
+
 ## Global Constraints
 
 - Socket: `/run/torchd/torchd.sock`, owned `root:torch-agent`, mode `0660`.
@@ -99,7 +112,7 @@ torch/src/commands/service.rs           # new
   "snake_case")]`), `Response::error(request_id: &str, message: impl Into<String>) -> Response`. Later
   tasks build on these exact names/fields.
 
-- [ ] **Step 1: Add the workspace member**
+- [x] **Step 1: Add the workspace member**
 
 `torch/Cargo.toml` — add `"torchd"` to the members list:
 ```toml
@@ -116,7 +129,7 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 ```
 
-- [ ] **Step 2: Create the torchd crate manifest**
+- [x] **Step 2: Create the torchd crate manifest**
 
 `torch/torchd/Cargo.toml`:
 ```toml
@@ -132,7 +145,7 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 ```
 
-- [ ] **Step 3: Write the protocol types**
+- [x] **Step 3: Write the protocol types**
 
 `torch/torchd/src/protocol.rs`:
 ```rust
@@ -215,7 +228,7 @@ impl Response {
 }
 ```
 
-- [ ] **Step 4: Write the echo-server main.rs** (stub dispatch — Task 7 replaces the stub with the
+- [x] **Step 4: Write the echo-server main.rs** (stub dispatch — Task 7 replaces the stub with the
   real policy/audit/ops-wired handler; this task's only job is proving the socket+protocol works)
 
 `torch/torchd/src/main.rs`:
@@ -268,7 +281,7 @@ fn handle_client(stream: UnixStream) -> Result<()> {
 }
 ```
 
-- [ ] **Step 5: Build and manually verify on the VM**
+- [x] **Step 5: Build and manually verify on the VM**
 
 ```bash
 scp -r torch torch@localhost:~/torch -P 2222
@@ -284,7 +297,7 @@ ssh -p 2222 torch@localhost 'echo "{\"request_id\":\"1\",\"op\":\"snapshot.creat
 Expected: `{"request_id":"1","status":"error","message":"not implemented yet"}` — a well-formed
 response, proving the socket/protocol round-trip works end to end.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add torch/Cargo.toml torch/torchd/Cargo.toml torch/torchd/src
@@ -304,7 +317,7 @@ git commit -m "feat: torchd crate scaffold with protocol types and echo server"
   errors if the connecting peer is uid 0 / root). Task 7's real dispatch handler uses this to reject
   root connections and to populate the audit log's `peer_uid` field.
 
-- [ ] **Step 1: Create the `torch-agent` group on the VM** (one-time machine setup, not code — this
+- [x] **Step 1: Create the `torch-agent` group on the VM** (one-time machine setup, not code — this
   socket's ownership depends on the group existing)
 
 ```bash
@@ -315,7 +328,7 @@ Verify: `ssh -p 2222 torch@localhost 'getent group torch-agent'` shows the group
 member (a fresh login may be needed for the group membership to apply to a *new* SSH session — the
 existing Gotcha about group grants not applying retroactively applies here too).
 
-- [ ] **Step 2: Move the socket to its real path with real ownership**
+- [x] **Step 2: Move the socket to its real path with real ownership**
 
 `torch/torchd/src/main.rs` — replace the `SOCKET_PATH` constant and `main()`'s bind logic:
 ```rust
@@ -355,7 +368,7 @@ fn main() -> Result<()> {
 }
 ```
 
-- [ ] **Step 2: Add peer-identity extraction**
+- [x] **Step 2: Add peer-identity extraction**
 
 `torch/torchd/src/main.rs` — add this function and use it at the top of `handle_client`:
 ```rust
@@ -401,7 +414,7 @@ fn handle_client(stream: UnixStream) -> Result<()> {
 }
 ```
 
-- [ ] **Step 3: Verify on the VM — authorized connection works, unauthorized is rejected at the OS
+- [x] **Step 3: Verify on the VM — authorized connection works, unauthorized is rejected at the OS
   level**
 
 ```bash
@@ -426,7 +439,7 @@ permission blocks the connection before torchd's own code even runs. (If `nobody
 can't be `sudo -u`'d directly, use any other real non-`torch-agent` user instead — the point is
 confirming the OS-level file-permission layer, not this specific test user.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add torch/torchd/src/main.rs
@@ -446,7 +459,7 @@ git commit -m "feat: torchd real socket path, permissions, and SO_PEERCRED ident
   Denied(String) }`, `fn decide(op: &str, tier: Tier, has_confirmation: bool) -> Decision`. Task 7's
   real dispatch handler calls `decide()` for every request before running an operation.
 
-- [ ] **Step 1: Write the failing tests** (table-driven, covering every row of the Global Constraints
+- [x] **Step 1: Write the failing tests** (table-driven, covering every row of the Global Constraints
   danger-tier table plus the denylist)
 
 `torch/torchd/src/policy.rs`:
@@ -548,14 +561,14 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Wire the module into main.rs**
+- [x] **Step 2: Wire the module into main.rs**
 
 `torch/torchd/src/main.rs` — add near the top:
 ```rust
 mod policy;
 ```
 
-- [ ] **Step 3: Run the tests on the VM**
+- [x] **Step 3: Run the tests on the VM**
 
 ```bash
 scp -r torch torch@localhost:~/torch -P 2222
@@ -565,7 +578,7 @@ Expected: all 5 tests pass (`denylist_always_wins_regardless_of_tier`,
 `recommend_tier_never_auto_approves`, `auto_tier_matches_danger_table`,
 `rollback_always_confirms_even_in_trust`, `trust_tier_auto_approves_everything_except_rollback_and_denylist`).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add torch/torchd/src/main.rs torch/torchd/src/policy.rs
@@ -587,7 +600,7 @@ git commit -m "feat: torchd policy engine (tiers, denylist, danger-tier table)"
   Result<()>`. Task 7's real dispatch handler constructs an `AuditEvent` per request and calls
   `append()`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `torch/torchd/src/audit.rs`:
 ```rust
@@ -666,7 +679,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Add `uuid` as a dev-dependency for the test, and wire the module**
+- [x] **Step 2: Add `uuid` as a dev-dependency for the test, and wire the module**
 
 `torch/torchd/Cargo.toml` — add a `[dev-dependencies]` section (uuid is already a normal dependency
 from Task 1, so this step just confirms it's usable in tests, which it already is since normal deps
@@ -678,7 +691,7 @@ test` already passes without one).
 mod audit;
 ```
 
-- [ ] **Step 3: Run the test on the VM**
+- [x] **Step 3: Run the test on the VM**
 
 ```bash
 scp -r torch torch@localhost:~/torch -P 2222
@@ -686,7 +699,7 @@ ssh -p 2222 torch@localhost 'cd ~/torch && cargo test -j 1 -p torchd appends_val
 ```
 Expected: `test audit::tests::appends_valid_parseable_jsonl ... ok`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add torch/torchd/src/main.rs torch/torchd/src/audit.rs torch/torchd/Cargo.toml
@@ -708,7 +721,7 @@ git commit -m "feat: torchd JSONL audit log writer"
   human-readable success message), `ops::snapshot::rollback(args: &serde_json::Value) ->
   Result<String>`. Task 7 calls these by matching on `Request.op`.
 
-- [ ] **Step 1: Create the ops module root**
+- [x] **Step 1: Create the ops module root**
 
 `torch/torchd/src/ops/mod.rs`:
 ```rust
@@ -717,7 +730,7 @@ pub mod service;
 pub mod snapshot;
 ```
 
-- [ ] **Step 2: Write snapshot ops**
+- [x] **Step 2: Write snapshot ops**
 
 `torch/torchd/src/ops/snapshot.rs`:
 ```rust
@@ -766,14 +779,14 @@ pub fn rollback(args: &serde_json::Value) -> Result<String> {
 }
 ```
 
-- [ ] **Step 3: Wire the module into main.rs**
+- [x] **Step 3: Wire the module into main.rs**
 
 `torch/torchd/src/main.rs` — add:
 ```rust
 mod ops;
 ```
 
-- [ ] **Step 4: Build on the VM (no dispatch wiring yet — that's Task 7 — this just confirms the
+- [x] **Step 4: Build on the VM (no dispatch wiring yet — that's Task 7 — this just confirms the
   module compiles)**
 
 ```bash
@@ -791,7 +804,7 @@ pub mod snapshot;
 ```
 (Task 6 changes this to add `pub mod package;`, Task 7 adds `pub mod service;`.)
 
-- [ ] **Step 5: Real verification — call `create` directly via a tiny test binary is unnecessary;
+- [x] **Step 5: Real verification — call `create` directly via a tiny test binary is unnecessary;
   verify by exercising it through Task 1's existing echo path won't work yet either (dispatch isn't
   wired). Instead, verify the underlying command is correct by running it directly on the VM once,
   matching exactly what the Rust code invokes:**
@@ -804,7 +817,7 @@ Expected: a new snapshot appears in the list with the matching description — c
 command `create()` runs is correct real snapper syntax. (Full end-to-end verification through
 `torchd` itself happens in Task 7, once dispatch is wired.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add torch/torchd/src/main.rs torch/torchd/src/ops
@@ -824,7 +837,7 @@ git commit -m "feat: torchd snapshot.create and snapshot.rollback operations"
 - Produces: `ops::package::install(args: &serde_json::Value) -> Result<String>`,
   `ops::package::remove(args: &serde_json::Value) -> Result<String>`. Task 7 calls these.
 
-- [ ] **Step 1: Write package ops**
+- [x] **Step 1: Write package ops**
 
 `torch/torchd/src/ops/package.rs`:
 ```rust
@@ -873,7 +886,7 @@ pub fn remove(args: &serde_json::Value) -> Result<String> {
 }
 ```
 
-- [ ] **Step 2: Wire the module in**
+- [x] **Step 2: Wire the module in**
 
 `torch/torchd/src/ops/mod.rs`:
 ```rust
@@ -881,7 +894,7 @@ pub mod package;
 pub mod snapshot;
 ```
 
-- [ ] **Step 3: Build on the VM**
+- [x] **Step 3: Build on the VM**
 
 ```bash
 scp -r torch torch@localhost:~/torch -P 2222
@@ -890,7 +903,7 @@ ssh -p 2222 torch@localhost 'cd ~/torch && cargo build -j 1 -p torchd'
 Expected: builds clean (comment out `pub mod service;` reference — it doesn't exist until Task 7 —
 this file already omits it above, matching Task 5's note).
 
-- [ ] **Step 4: Real verification — confirm the exact commands work as invoked**
+- [x] **Step 4: Real verification — confirm the exact commands work as invoked**
 
 ```bash
 ssh -p 2222 torch@localhost 'pacman -Q tldr 2>&1 || echo "not installed"'
@@ -902,7 +915,7 @@ this is a real, verifiable state change rather than a no-op) installs successful
 tree` confirms it. Clean up if desired: `sudo pacman -R --noconfirm tree` (optional — leaving it
 installed is harmless).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add torch/torchd/src/ops/mod.rs torch/torchd/src/ops/package.rs
@@ -925,7 +938,7 @@ git commit -m "feat: torchd package.install and package.remove operations"
 - Produces: the real `handle_client` — this is the last task that touches `main.rs`'s dispatch logic;
   Task 8 (systemd) and Task 9 (CLI client) treat this as the finished daemon behavior.
 
-- [ ] **Step 1: Write the service op**
+- [x] **Step 1: Write the service op**
 
 `torch/torchd/src/ops/service.rs`:
 ```rust
@@ -958,7 +971,7 @@ pub mod service;
 pub mod snapshot;
 ```
 
-- [ ] **Step 2: Replace `main.rs`'s stub dispatch with the real handler**
+- [x] **Step 2: Replace `main.rs`'s stub dispatch with the real handler**
 
 `torch/torchd/src/main.rs` — replace `handle_client` entirely (keep everything above it from Task 2 —
 `SOCKET_DIR`, `SOCKET_PATH`, `main()`, `peer_identity()` — unchanged):
@@ -1094,7 +1107,7 @@ fn chrono_now() -> String {
 added incrementally in Tasks 2-6 — consolidate them at the top of `main.rs` as shown; remove any
 duplicate `mod` lines left over from earlier tasks.)
 
-- [ ] **Step 3: Build and run the full end-to-end flow on the VM**
+- [x] **Step 3: Build and run the full end-to-end flow on the VM**
 
 ```bash
 scp -r torch torch@localhost:~/torch -P 2222
@@ -1136,7 +1149,7 @@ ssh -p 2222 torch@localhost 'echo torchos2026 | sudo -S -k tail -5 /var/log/torc
 Expected: 3 well-formed JSONL lines (one per request above), each parseable, with `peer_uid` = 1000
 and `peer_user` = `torch`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add torch/torchd/src/main.rs torch/torchd/src/ops
@@ -1157,7 +1170,7 @@ git commit -m "feat: torchd service.restart and real request dispatch"
   daemon to actually be running under systemd, not the manual `setsid nohup` pattern used in earlier
   tasks' testing.
 
-- [ ] **Step 1: Write the unit file**
+- [x] **Step 1: Write the unit file**
 
 `torch/torchd.service`:
 ```ini
@@ -1200,7 +1213,7 @@ plain root, which `ProtectSystem=strict` and the other directives further constr
 explicitly allows only the two paths torchd actually needs to write (`/run/torchd` for the socket,
 `/var/log/torchd` for the audit log) despite `ProtectSystem=strict` making everything else read-only.
 
-- [ ] **Step 2: Deploy and verify on the VM**
+- [x] **Step 2: Deploy and verify on the VM**
 
 ```bash
 scp -P 2222 torch/torchd.service torch@localhost:~/torchd.service
@@ -1240,7 +1253,7 @@ Expected: a real score printed (not erroring), with most individual checks showi
 hardening directives above — read the actual output rather than assuming a specific number, since the
 exact score depends on the installed systemd version.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add torch/torchd.service
@@ -1267,7 +1280,7 @@ git commit -m "feat: torchd systemd unit with hardening"
   (handles the full request/confirm-prompt/resend loop internally, returns the final `result` on
   success, errors on `denied`/`error`). Nothing later consumes this — it's the plan's last task.
 
-- [ ] **Step 1: Add dependencies to the root crate**
+- [x] **Step 1: Add dependencies to the root crate**
 
 `torch/Cargo.toml`:
 ```toml
@@ -1287,7 +1300,7 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 ```
 
-- [ ] **Step 2: Write the torchd client module**
+- [x] **Step 2: Write the torchd client module**
 
 `torch/src/torchd_client.rs`:
 ```rust
@@ -1366,7 +1379,7 @@ message (simplest — each command already knows what it just did), so `call_and
 a separate function. Remove it; each command below calls `torchd_client::call(...)` directly and
 prints its own message.
 
-- [ ] **Step 3: Wire the module into main.rs and add new subcommands**
+- [x] **Step 3: Wire the module into main.rs and add new subcommands**
 
 `torch/src/main.rs` — add the module declaration and new subcommands:
 ```rust
@@ -1480,7 +1493,7 @@ fn main() -> Result<()> {
 }
 ```
 
-- [ ] **Step 4: Update `snapshot.rs`'s `create()` to use torchd, add `rollback()`**
+- [x] **Step 4: Update `snapshot.rs`'s `create()` to use torchd, add `rollback()`**
 
 `torch/src/commands/snapshot.rs` (`list()` stays exactly as-is — it's unprivileged and doesn't touch
 torchd; replace `run_snapper`/`create` and add `rollback`):
@@ -1525,7 +1538,7 @@ pub fn rollback(snapshot_id: &str) -> Result<()> {
 }
 ```
 
-- [ ] **Step 5: Write `torch update`**
+- [x] **Step 5: Write `torch update`**
 
 `torch/src/commands/update.rs`:
 ```rust
@@ -1549,7 +1562,7 @@ pub fn run(packages: &[String]) -> Result<()> {
 }
 ```
 
-- [ ] **Step 6: Write `torch service restart`**
+- [x] **Step 6: Write `torch service restart`**
 
 `torch/src/commands/service.rs`:
 ```rust
@@ -1565,13 +1578,13 @@ pub fn restart(name: &str) -> Result<()> {
 }
 ```
 
-- [ ] **Step 7: Fix the `torchd_client.rs` `call_and_print` issue found while writing this task**
+- [x] **Step 7: Fix the `torchd_client.rs` `call_and_print` issue found while writing this task**
   (per the note in Step 2 — remove the unused function)
 
 `torch/src/torchd_client.rs` — delete the `call_and_print` function entirely; it's unused since every
 command above calls `torchd_client::call(...)` directly and prints its own success message.
 
-- [ ] **Step 8: Build on the VM and run the full end-to-end CLI flow**
+- [x] **Step 8: Build on the VM and run the full end-to-end CLI flow**
 
 ```bash
 scp -r torch torch@localhost:~/torch -P 2222
@@ -1601,7 +1614,7 @@ Expected: prints the confirmation message, reads `n`, prints `cancelled` (via th
 output looks too raw for a CLI tool, though this is a minor polish call left to the implementer's
 judgment, not a hard requirement).
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add torch/Cargo.toml torch/src/torchd_client.rs torch/src/main.rs torch/src/commands/snapshot.rs torch/src/commands/update.rs torch/src/commands/service.rs

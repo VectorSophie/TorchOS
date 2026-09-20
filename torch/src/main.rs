@@ -5,9 +5,12 @@ mod commands {
     pub mod diagnose;
     pub mod doctor;
     pub mod gpu;
+    pub mod service;
     pub mod snapshot;
     pub mod status;
+    pub mod update;
 }
+mod torchd_client;
 
 // PHASE 1 NOTE: every command here shells out directly to snapper/systemctl/etc.
 // That's a deliberate stopgap, not the target architecture — per the locked design
@@ -16,6 +19,10 @@ mod commands {
 // over its Unix socket instead of invoking system tools directly. Keeping the direct
 // shell-outs isolated to commands/*.rs (not scattered through main.rs) is what makes
 // that swap a contained change later rather than a rewrite.
+//
+// PHASE 2 UPDATE: snapshot create/rollback, update, and service restart are now
+// torchd clients (see torchd_client.rs). status/doctor/gpu/diagnose/snapshot list
+// remain direct — they're unprivileged reads with nothing to broker.
 
 #[derive(Parser)]
 #[command(name = "torch")]
@@ -41,6 +48,16 @@ enum Commands {
         #[command(subcommand)]
         action: SnapshotAction,
     },
+    /// Install packages via torchd
+    Update {
+        /// Package names to install
+        packages: Vec<String>,
+    },
+    /// Manage systemd services via torchd
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -51,6 +68,20 @@ enum SnapshotAction {
     Create {
         /// What this snapshot is for, e.g. "before enabling nvidia-open driver"
         description: String,
+    },
+    /// Roll back to a prior snapshot (takes effect on next reboot)
+    Rollback {
+        /// Snapshot number, from `torch snapshot list`
+        snapshot_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// Restart a systemd service
+    Restart {
+        /// Service name, e.g. "NetworkManager"
+        name: String,
     },
 }
 
@@ -65,6 +96,11 @@ fn main() -> Result<()> {
         Commands::Snapshot { action } => match action {
             SnapshotAction::List => commands::snapshot::list()?,
             SnapshotAction::Create { description } => commands::snapshot::create(&description)?,
+            SnapshotAction::Rollback { snapshot_id } => commands::snapshot::rollback(&snapshot_id)?,
+        },
+        Commands::Update { packages } => commands::update::run(&packages)?,
+        Commands::Service { action } => match action {
+            ServiceAction::Restart { name } => commands::service::restart(&name)?,
         },
     }
 
