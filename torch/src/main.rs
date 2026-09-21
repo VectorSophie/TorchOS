@@ -1,5 +1,5 @@
-use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::process::ExitCode;
 
 mod commands {
     pub mod diagnose;
@@ -37,11 +37,15 @@ struct Cli {
 enum Commands {
     /// Show basic host status (uptime, disk, memory)
     Status,
-    /// Run basic health checks
-    Doctor,
+    /// Run health checks (exit 0 healthy, 1 degraded/failed, 2 unsupported environment)
+    Doctor {
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
     /// GPU detection
     Gpu,
-    /// Structured (JSON) system diagnostics — for scripts and the future AI assistant
+    /// Structured JSON diagnostics for scripts, support bundles and tests
     Diagnose,
     /// Btrfs/Snapper snapshot management
     Snapshot {
@@ -85,24 +89,30 @@ enum ServiceAction {
     },
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     let cli = Cli::parse();
-
-    match cli.command {
-        Commands::Status => commands::status::run()?,
-        Commands::Doctor => commands::doctor::run()?,
-        Commands::Gpu => commands::gpu::run()?,
-        Commands::Diagnose => commands::diagnose::run()?,
+    // Exit codes: 0 healthy, 1 degraded/failed checks, 2 unsupported environment, 3 internal failure.
+    let result: anyhow::Result<u8> = match cli.command {
+        Commands::Status => commands::status::run().map(|_| 0),
+        Commands::Doctor { json } => commands::doctor::run(json),
+        Commands::Gpu => commands::gpu::run(),
+        Commands::Diagnose => commands::diagnose::run(),
         Commands::Snapshot { action } => match action {
-            SnapshotAction::List => commands::snapshot::list()?,
-            SnapshotAction::Create { description } => commands::snapshot::create(&description)?,
-            SnapshotAction::Rollback { snapshot_id } => commands::snapshot::rollback(&snapshot_id)?,
-        },
-        Commands::Update { packages } => commands::update::run(&packages)?,
+            SnapshotAction::List => commands::snapshot::list(),
+            SnapshotAction::Create { description } => commands::snapshot::create(&description),
+            SnapshotAction::Rollback { snapshot_id } => commands::snapshot::rollback(&snapshot_id),
+        }
+        .map(|_| 0),
+        Commands::Update { packages } => commands::update::run(&packages).map(|_| 0),
         Commands::Service { action } => match action {
-            ServiceAction::Restart { name } => commands::service::restart(&name)?,
+            ServiceAction::Restart { name } => commands::service::restart(&name).map(|_| 0),
         },
+    };
+    match result {
+        Ok(code) => ExitCode::from(code),
+        Err(e) => {
+            eprintln!("torch: {e:#}");
+            ExitCode::from(3)
+        }
     }
-
-    Ok(())
 }
