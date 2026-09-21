@@ -9,3 +9,6 @@ image/vm/monitor.sock
 image/vm/user_credentials.json
 image/vm/*.iso
 *.bak
+image/build/
+image/repo/
+image/out/

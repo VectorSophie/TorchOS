@@ -1,0 +1,11 @@
+[Unit]
+Description=Create the live user's home from /etc/skel
+After=systemd-sysusers.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/torch-live-setup
+
+[Install]
+WantedBy=multi-user.target

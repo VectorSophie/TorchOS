@@ -1,0 +1,3 @@
+intel-ucode amd-ucode
+mesa vulkan-intel vulkan-radeon libva-intel-driver intel-media-driver
+mesa-utils vulkan-tools pciutils usbutils fwupd

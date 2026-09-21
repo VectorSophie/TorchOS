@@ -1,0 +1,3 @@
+#!/usr/bin/bash
+# Calamares needs root (partitioning); the live user has passwordless sudo.
+exec sudo -E QT_QPA_PLATFORM=wayland XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$WAYLAND_DISPLAY" calamares "$@"

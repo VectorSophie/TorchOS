@@ -1,0 +1,77 @@
+# Maintainer: TorchOS <https://github.com/VectorSophie/TorchOS>
+# Split package: one Rust build, five installable pieces.
+pkgbase=torchos
+pkgname=(torch-cli torch-welcome torch-config torch-branding torch-release torch-installer-config)
+pkgver=0.2.0
+pkgrel=1
+arch=(x86_64)
+url="https://github.com/VectorSophie/TorchOS"
+license=(MIT)
+makedepends=(cargo gtk4 pkgconf)
+source=(torchos-src.tar.gz torchd.sysusers os-release torchos-os-release.hook)
+sha256sums=(SKIP SKIP SKIP SKIP)
+
+build() {
+  cd "$srcdir/src/torch"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  # ponytail: opt-level 2, not 3 - keeps build memory sane on small builders.
+  CARGO_PROFILE_RELEASE_OPT_LEVEL=2 cargo build --release --locked -p torch -p torchd -p torch-welcome
+}
+
+package_torch-cli() {
+  pkgdesc="TorchOS CLI and the torchd privileged broker"
+  depends=(snapper pacman systemd)
+  install -Dm755 "$srcdir/target/release/torch"  "$pkgdir/usr/bin/torch"
+  install -Dm755 "$srcdir/target/release/torchd" "$pkgdir/usr/bin/torchd"
+  install -Dm644 "$srcdir/src/torch/torchd.service" "$pkgdir/usr/lib/systemd/system/torchd.service"
+  install -Dm644 "$srcdir/torchd.sysusers" "$pkgdir/usr/lib/sysusers.d/torchd.conf"
+  # torchd.service is enabled by the preset below.
+  install -d "$pkgdir/usr/lib/systemd/system-preset"
+  echo "enable torchd.service" > "$pkgdir/usr/lib/systemd/system-preset/50-torchd.preset"
+}
+
+package_torch-welcome() {
+  pkgdesc="TorchOS first-boot status window"
+  depends=(gtk4 torch-cli)
+  install -Dm755 "$srcdir/target/release/torch-welcome" "$pkgdir/usr/bin/torch-welcome"
+}
+
+package_torch-config() {
+  pkgdesc="TorchOS default Hyprland/Waybar/Wofi session configuration (new-user skeleton)"
+  depends=(hyprland waybar wofi wlogout hypridle hyprlock hyprpaper mako)
+  install -d "$pkgdir/etc/skel"
+  cp -a "$srcdir/src/dotfiles/dot_config" "$pkgdir/etc/skel/.config"
+  install -Dm644 "$srcdir/src/dotfiles/dot_bash_profile" "$pkgdir/etc/skel/.bash_profile"
+  # chezmoi-shaped source also ships for `chezmoi init --source`.
+  install -d "$pkgdir/usr/share/torchos"
+  cp -a "$srcdir/src/dotfiles" "$pkgdir/usr/share/torchos/dotfiles"
+}
+
+package_torch-branding() {
+  pkgdesc="TorchOS logo, icons and wallpapers"
+  for n in 16 32 48 64 128 256 512; do
+    install -Dm644 "$srcdir/src/assets/branding/icons/logo-$n.png" \
+      "$pkgdir/usr/share/icons/hicolor/${n}x${n}/apps/torchos.png"
+  done
+  install -Dm644 "$srcdir/src/assets/branding/icons/logo-256.png" "$pkgdir/usr/share/pixmaps/torchos.png"
+  install -Dm644 "$srcdir/src/assets/branding/wallpaper.png" "$pkgdir/usr/share/backgrounds/torchos/torchos-dark.png"
+  install -Dm644 "$srcdir/src/assets/branding/wallpaper-light.png" "$pkgdir/usr/share/backgrounds/torchos/torchos-light.png"
+}
+
+package_torch-release() {
+  pkgdesc="TorchOS release identity (os-release, issue)"
+  depends=(filesystem)
+  install -Dm644 "$srcdir/os-release" "$pkgdir/usr/share/torchos/os-release"
+  install -Dm644 "$srcdir/torchos-os-release.hook" "$pkgdir/usr/share/libalpm/hooks/torchos-os-release.hook"
+  printf 'TorchOS \\r (\\l)\n\n' | install -Dm644 /dev/stdin "$pkgdir/etc/issue"
+}
+
+package_torch-installer-config() {
+  pkgdesc="Calamares configuration and branding for the TorchOS installer"
+  depends=(calamares snapper grub-btrfs torch-branding)
+  install -d "$pkgdir/etc"
+  cp -a "$srcdir/src/image/calamares/etc/calamares" "$pkgdir/etc/calamares"
+  install -Dm644 "$srcdir/src/assets/branding/icons/logo-128.png" "$pkgdir/etc/calamares/branding/torchos/logo.png"
+  install -Dm644 "$srcdir/src/assets/branding/logo-badge.png" "$pkgdir/etc/calamares/branding/torchos/welcome.png"
+  install -Dm755 "$srcdir/src/image/calamares/usr/lib/torchos/torch-target-setup" "$pkgdir/usr/lib/torchos/torch-target-setup"
+}

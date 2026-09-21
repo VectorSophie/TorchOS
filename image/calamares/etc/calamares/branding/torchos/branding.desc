@@ -1,0 +1,30 @@
+---
+componentName: torchos
+welcomeStyleCalamares: true
+welcomeExpandingLogo: true
+windowExpanding: normal
+windowSize: 900px,620px
+windowPlacement: center
+strings:
+  productName: TorchOS
+  shortProductName: TorchOS
+  version: "0.2"
+  shortVersion: "0.2"
+  versionedName: "TorchOS 0.2"
+  shortVersionedName: "TorchOS 0.2"
+  bootloaderEntryName: TorchOS
+  productUrl: https://github.com/VectorSophie/TorchOS
+  supportUrl: https://github.com/VectorSophie/TorchOS/issues
+  knownIssuesUrl: https://github.com/VectorSophie/TorchOS/blob/master/docs/known-issues.md
+  releaseNotesUrl: https://github.com/VectorSophie/TorchOS
+images:
+  productLogo: "logo.png"
+  productIcon: "logo.png"
+  productWelcome: "welcome.png"
+style:
+  sidebarBackground: "#2b0a00"
+  sidebarText: "#ffffff"
+  sidebarTextSelect: "#ff6a00"
+  sidebarTextHighlight: "#ff4500"
+slideshow: "show.qml"
+slideshowAPI: 2

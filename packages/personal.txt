@@ -1,0 +1,3 @@
+bat dust eza fd fzf jq ripgrep starship tldr tmux zoxide inxi plocate
+neovim lazygit github-cli
+mpv obs-studio

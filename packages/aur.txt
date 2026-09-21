@@ -1,0 +1,4 @@
+# Reviewed AUR recipes, built by image/scripts/build-packages.sh into the local
+# `torchos` repo (never `yay`-installed at runtime). One line of justification each.
+wlogout # logout menu bound in hyprland.conf; not in official repos
+calamares # graphical installer; not in official repos

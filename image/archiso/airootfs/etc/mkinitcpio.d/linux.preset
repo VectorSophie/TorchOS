@@ -1,0 +1,8 @@
+# mkinitcpio preset for the live medium. The installer restores a normal preset (see
+# image/calamares) so the installed system does NOT boot through archiso hooks.
+PRESETS=('archiso')
+
+ALL_kver='/boot/vmlinuz-linux'
+archiso_config='/etc/mkinitcpio.conf.d/archiso.conf'
+
+archiso_image="/boot/initramfs-linux.img"

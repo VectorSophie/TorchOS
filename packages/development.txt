@@ -1,0 +1,2 @@
+base-devel rust docker docker-compose docker-buildx mise
+python python-pip nodejs npm

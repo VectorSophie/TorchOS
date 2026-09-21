@@ -1,0 +1,1 @@
+imagemagick pinta ffmpegthumbnailer libreoffice-fresh evince

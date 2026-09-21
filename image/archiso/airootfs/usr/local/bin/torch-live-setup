@@ -1,0 +1,12 @@
+#!/usr/bin/bash
+# Live-session bootstrap: home dir, live-only Hyprland snippet with the installer launcher.
+set -eu
+H=/home/liveuser
+[ -d $H/.config ] || { mkdir -p $H; cp -a /etc/skel/. $H/; }
+mkdir -p $H/.config/hypr/conf.d $H/Desktop
+cat > $H/.config/hypr/conf.d/live.conf <<'CONF'
+# live session only
+exec-once = sleep 3 && calamares-launch
+bind = SUPER, I, exec, calamares-launch
+CONF
+chown -R liveuser:liveuser $H

@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = filesystem
+Target = torch-release
+
+[Action]
+Description = Restoring TorchOS os-release...
+When = PostTransaction
+Exec = /usr/bin/install -Dm644 /usr/share/torchos/os-release /usr/lib/os-release

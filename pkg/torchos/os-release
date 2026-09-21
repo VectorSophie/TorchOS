@@ -1,0 +1,11 @@
+NAME="TorchOS"
+PRETTY_NAME="TorchOS"
+ID=torchos
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;2;255;69;0"
+HOME_URL="https://github.com/VectorSophie/TorchOS"
+DOCUMENTATION_URL="https://github.com/VectorSophie/TorchOS/tree/master/docs"
+SUPPORT_URL="https://github.com/VectorSophie/TorchOS/issues"
+BUG_REPORT_URL="https://github.com/VectorSophie/TorchOS/issues"
+LOGO=torchos

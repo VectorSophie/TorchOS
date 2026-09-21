@@ -1,0 +1,9 @@
+base linux linux-lts linux-firmware sof-firmware
+btrfs-progs snapper snap-pac grub grub-btrfs efibootmgr os-prober
+mkinitcpio dosfstools exfatprogs e2fsprogs
+networkmanager network-manager-applet openssh
+pipewire pipewire-alsa pipewire-pulse wireplumber
+bluez bluez-utils cups
+sudo nano vim git curl wget man-db less which
+zram-generator power-profiles-daemon polkit
+reflector pacman-contrib

@@ -1,0 +1,11 @@
+hyprland hypridle hyprlock hyprpaper hyprpicker uwsm
+xdg-desktop-portal-hyprland xdg-desktop-portal-gtk polkit-gnome
+waybar wofi mako swayosd kitty
+nautilus gvfs gvfs-mtp gvfs-smb sushi gnome-disk-utility
+grim slurp satty wl-clipboard cliphist imv
+brightnessctl playerctl pamixer
+fcitx5 fcitx5-gtk fcitx5-qt fcitx5-hangul
+noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-jetbrains-mono-nerd otf-font-awesome
+gnome-themes-extra qt5-wayland qt6-wayland
+firefox fastfetch btop
+gtk4

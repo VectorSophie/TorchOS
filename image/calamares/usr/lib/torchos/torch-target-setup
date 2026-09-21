@@ -1,0 +1,50 @@
+#!/usr/bin/bash
+# Runs inside the freshly unpacked target (chroot) as a Calamares shellprocess.
+# Turns the copied live rootfs into an installed system. Log: /var/log/torchos-install.log
+# Steps are ordered so a failure in a nice-to-have (snapper, grub-btrfs) never blocks boot.
+exec > >(tee -a /var/log/torchos-install.log) 2>&1
+set -x
+
+## 1. Remove everything that only exists for the live session.
+rm -f /usr/lib/sysusers.d/torch-live.conf /etc/sudoers.d/99-torch-live \
+      /etc/systemd/system/getty@tty1.service.d/autologin.conf \
+      /etc/systemd/system/multi-user.target.wants/torch-live-setup.service \
+      /etc/systemd/system/torch-live-setup.service \
+      /usr/local/bin/torch-live-setup /usr/local/bin/calamares-launch \
+      /etc/mkinitcpio.conf.d/archiso.conf /etc/hostname.live
+rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
+rm -rf /home/liveuser
+
+## 2. Normal initramfs (the live one boots through archiso hooks) for every installed kernel.
+for d in /usr/lib/modules/*/; do
+  base=$(cat "$d/pkgbase" 2>/dev/null) || continue
+  [ -f "$d/vmlinuz" ] && install -Dm644 "$d/vmlinuz" "/boot/vmlinuz-$base"
+  cat > "/etc/mkinitcpio.d/$base.preset" <<PRESET
+ALL_kver="/boot/vmlinuz-$base"
+PRESETS=('default' 'fallback')
+default_image="/boot/initramfs-$base.img"
+fallback_image="/boot/initramfs-$base-fallback.img"
+fallback_options="-S autodetect"
+PRESET
+done
+mkinitcpio -P || echo "WARN: mkinitcpio -P failed"
+
+## 3. Keyring, zram, services.
+pacman-key --init && pacman-key --populate archlinux
+mkdir -p /etc/systemd
+printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
+for u in NetworkManager.service bluetooth.service torchd.service power-profiles-daemon.service \
+         systemd-timesyncd.service fstrim.timer cups.socket \
+         snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path; do
+  systemctl enable "$u" || echo "WARN: could not enable $u"
+done
+
+## 4. Snapper on the root Btrfs (skipped cleanly on non-Btrfs roots) + the first checkpoint,
+##    taken *before* grub-mkconfig so grub-btrfs sees it.
+if [ "$(findmnt -no FSTYPE /)" = btrfs ]; then
+  snapper --no-dbus -c root create-config / \
+    && snapper --no-dbus -c root set-config TIMELINE_CREATE=no NUMBER_LIMIT=10 NUMBER_LIMIT_IMPORTANT=6 \
+    && snapper --no-dbus -c root create -d "TorchOS fresh install" -u important=yes \
+    || echo "WARN: snapper setup failed"
+fi
+exit 0
