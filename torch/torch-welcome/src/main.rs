@@ -7,14 +7,55 @@ const APP_ID: &str = "org.torchos.Welcome";
 const DISMISS_FLAG_REL: &str = ".config/torch/welcome-dismissed";
 const STYLE: &str = include_str!("style.css");
 
-#[derive(serde::Deserialize, Debug, PartialEq)]
+// Mirrors `torch diagnose` (schema 1). Every field is optional/defaulted so a newer
+// or partial document still renders instead of collapsing to "unknown".
+#[derive(serde::Deserialize, Debug, PartialEq, Default)]
+struct Gpu {
+    #[serde(default)]
+    vendor: String,
+    #[serde(default)]
+    device: String,
+}
+
+#[derive(serde::Deserialize, Debug, PartialEq, Default)]
 struct Diagnose {
-    kernel: String,
-    hostname: String,
-    root_fstype: String,
-    gpu: String,
-    failed_units: String,
-    mem_available_kb: String,
+    #[serde(default)]
+    kernel: Option<String>,
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
+    root_fstype: Option<String>,
+    #[serde(default)]
+    gpus: Vec<Gpu>,
+    #[serde(default)]
+    failed_units: Vec<String>,
+    #[serde(default)]
+    mem_available_kb: Option<u64>,
+}
+
+impl Diagnose {
+    fn rows(&self) -> Vec<(&'static str, String)> {
+        let or_unknown = |o: &Option<String>| o.clone().unwrap_or_else(|| "unknown".into());
+        let gpu = if self.gpus.is_empty() {
+            "none detected".to_string()
+        } else {
+            self.gpus.iter().map(|g| format!("{} {}", g.vendor, g.device)).collect::<Vec<_>>().join(", ")
+        };
+        vec![
+            ("Kernel", or_unknown(&self.kernel)),
+            ("Hostname", or_unknown(&self.hostname)),
+            ("Root filesystem", or_unknown(&self.root_fstype)),
+            ("GPU", gpu),
+            (
+                "Available memory",
+                self.mem_available_kb.map_or("unknown".into(), |kb| format!("{} MiB", kb / 1024)),
+            ),
+            (
+                "Failed services",
+                if self.failed_units.is_empty() { "none".into() } else { self.failed_units.join(", ") },
+            ),
+        ]
+    }
 }
 
 fn dismiss_flag_path() -> std::path::PathBuf {
@@ -23,6 +64,7 @@ fn dismiss_flag_path() -> std::path::PathBuf {
 }
 
 fn run_diagnose() -> anyhow::Result<Diagnose> {
+    // `torch diagnose` exits 1 when any check is degraded; the JSON on stdout is still valid.
     let out = std::process::Command::new("torch").arg("diagnose").output()?;
     Ok(serde_json::from_slice(&out.stdout)?)
 }
@@ -38,14 +80,7 @@ fn load_css() {
 }
 
 fn build_ui(app: &Application) {
-    let diag = run_diagnose().unwrap_or(Diagnose {
-        kernel: "unknown".into(),
-        hostname: "unknown".into(),
-        root_fstype: "unknown".into(),
-        gpu: "unknown".into(),
-        failed_units: String::new(),
-        mem_available_kb: "0".into(),
-    });
+    let diag = run_diagnose().unwrap_or_default();
 
     let container = GtkBox::new(Orientation::Vertical, 12);
     container.set_margin_top(24);
@@ -58,17 +93,7 @@ fn build_ui(app: &Application) {
     title.add_css_class("welcome-title");
     container.append(&title);
 
-    let rows = [
-        ("Kernel", diag.kernel.as_str()),
-        ("Hostname", diag.hostname.as_str()),
-        ("Root filesystem", diag.root_fstype.as_str()),
-        ("GPU", diag.gpu.as_str()),
-        ("Available memory (kB)", diag.mem_available_kb.as_str()),
-        (
-            "Failed services",
-            if diag.failed_units.is_empty() { "none" } else { diag.failed_units.as_str() },
-        ),
-    ];
+    let rows = diag.rows();
     for (label, value) in rows {
         let row = Label::new(Some(&format!("{label}: {value}")));
         row.set_halign(Align::Start);
@@ -118,14 +143,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_real_diagnose_json_shape() {
-        // Exact shape torch/src/commands/diagnose.rs emits — a flat
-        // string-keyed object, all values strings (even the numeric one).
-        let sample = r#"{"kernel":"6.10.1-1-cachyos","hostname":"torchos-vm","root_fstype":"btrfs","gpu":"00:02.0 VGA compatible controller: Red Hat, Inc. Virtio GPU","failed_units":"","mem_available_kb":"1048576"}"#;
-        let diag: Diagnose = serde_json::from_str(sample).unwrap();
-        assert_eq!(diag.kernel, "6.10.1-1-cachyos");
-        assert_eq!(diag.root_fstype, "btrfs");
-        assert_eq!(diag.mem_available_kb, "1048576");
-        assert_eq!(diag.failed_units, "");
+    fn parses_schema_1_and_renders_rows() {
+        let sample = r#"{"schema":1,"kernel":"7.2.6-arch2-1","hostname":"torchos-test","root_fstype":"btrfs",
+            "gpus":[{"slot":"00:02.0","class":"VGA compatible controller","vendor":"Red Hat, Inc.","device":"Virtio 1.0 GPU"}],
+            "failed_units":["a.service","b.mount"],"mem_available_kb":2097152,"checks":[]}"#;
+        let d: Diagnose = serde_json::from_str(sample).unwrap();
+        let rows = d.rows();
+        assert_eq!(rows[0], ("Kernel", "7.2.6-arch2-1".to_string()));
+        assert_eq!(rows[3].1, "Red Hat, Inc. Virtio 1.0 GPU");
+        assert_eq!(rows[4].1, "2048 MiB");
+        assert_eq!(rows[5].1, "a.service, b.mount");
+    }
+
+    #[test]
+    fn empty_document_still_renders() {
+        let d: Diagnose = serde_json::from_str("{}").unwrap();
+        assert_eq!(d.rows()[0].1, "unknown");
+        assert_eq!(d.rows()[5].1, "none");
     }
 }

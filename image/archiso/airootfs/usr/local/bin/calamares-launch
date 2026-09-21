@@ -1,3 +1,14 @@
 #!/usr/bin/bash
 # Calamares needs root (partitioning); the live user has passwordless sudo.
+# Hyprland tiles it half-width by default, which clips the pages, so maximize it once it maps.
+(
+  for _ in $(seq 1 40); do
+    if hyprctl clients 2>/dev/null | grep -q 'class: io.calamares.calamares'; then
+      hyprctl dispatch focuswindow class:io.calamares.calamares
+      hyprctl dispatch fullscreen 1
+      break
+    fi
+    sleep 1
+  done
+) &
 exec sudo -E QT_QPA_PLATFORM=wayland XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$WAYLAND_DISPLAY" calamares "$@"

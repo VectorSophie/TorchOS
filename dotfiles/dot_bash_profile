@@ -1,5 +1,0 @@
-# Start the desktop when logging in on tty1 (no display manager yet; see docs/decisions).
-[[ -f ~/.bashrc ]] && . ~/.bashrc
-if [[ -z ${WAYLAND_DISPLAY:-} && ${XDG_VTNR:-} == 1 ]]; then
-  exec Hyprland
-fi

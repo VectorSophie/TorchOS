@@ -14,6 +14,13 @@ rm -f /usr/lib/sysusers.d/torch-live.conf /etc/sudoers.d/99-torch-live \
       /etc/mkinitcpio.conf.d/archiso.conf /etc/hostname.live
 rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
 rm -rf /home/liveuser
+userdel liveuser 2>/dev/null || true   # account can exist in the copied passwd/shadow/group
+groupdel liveuser 2>/dev/null || true
+rm -f /etc/systemd/system/pacman-init.service /etc/systemd/system/etc-pacman.d-gnupg.mount \
+      /etc/systemd/system/multi-user.target.wants/pacman-init.service
+# The live image masks firstboot (no interactive prompt); the installed system does not need it either
+# (Calamares sets locale/timezone/machine-id), but leave it unmasked so it is not silently disabled.
+rm -f /etc/systemd/system/systemd-firstboot.service
 
 ## 2. Normal initramfs (the live one boots through archiso hooks) for every installed kernel.
 for d in /usr/lib/modules/*/; do
@@ -46,5 +53,15 @@ if [ "$(findmnt -no FSTYPE /)" = btrfs ]; then
     && snapper --no-dbus -c root set-config TIMELINE_CREATE=no NUMBER_LIMIT=10 NUMBER_LIMIT_IMPORTANT=6 \
     && snapper --no-dbus -c root create -d "TorchOS fresh install" -u important=yes \
     || echo "WARN: snapper setup failed"
+fi
+
+## 5. Development ISOs only (build-iso.sh with DEV_SSH_PUBKEY): keep sshd + serial console for testing.
+if [ -f /etc/torch-dev-build ]; then
+  systemctl enable sshd.service
+  for h in /home/*/; do
+    u=$(basename "$h"); mkdir -p "$h.ssh"; cp /etc/ssh/dev_authorized_keys "$h.ssh/authorized_keys"
+    chown -R "$u:$u" "$h.ssh"; chmod 700 "$h.ssh"; chmod 600 "$h.ssh/authorized_keys"
+  done
+  sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="console=ttyS0,115200 console=tty0"/' /etc/default/grub
 fi
 exit 0

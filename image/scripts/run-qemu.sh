@@ -35,6 +35,7 @@ fi
 COMMON=(-name torchos -enable-kvm -cpu host -smp "$CPUS" -m "$RAM"
   -netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22" -device virtio-net-pci,netdev=net0
   "${GPU[@]}" -device qemu-xhci -device usb-tablet -device intel-hda -device hda-duplex
+  -monitor unix:image/vm/monitor.sock,server,nowait -serial file:image/vm/serial.log
   "${DISP[@]}")
 UEFI=(-drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" -drive if=pflash,format=raw,file="$VARS")
 

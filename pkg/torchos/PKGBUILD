@@ -8,8 +8,8 @@ arch=(x86_64)
 url="https://github.com/VectorSophie/TorchOS"
 license=(MIT)
 makedepends=(cargo gtk4 pkgconf)
-source=(torchos-src.tar.gz torchd.sysusers os-release torchos-os-release.hook)
-sha256sums=(SKIP SKIP SKIP SKIP)
+source=(torchos-src.tar.gz torchd.sysusers os-release torchos-os-release.hook torchos-hyprland.sh)
+sha256sums=(SKIP SKIP SKIP SKIP SKIP)
 
 build() {
   cd "$srcdir/src/torch"
@@ -41,7 +41,7 @@ package_torch-config() {
   depends=(hyprland waybar wofi wlogout hypridle hyprlock hyprpaper mako)
   install -d "$pkgdir/etc/skel"
   cp -a "$srcdir/src/dotfiles/dot_config" "$pkgdir/etc/skel/.config"
-  install -Dm644 "$srcdir/src/dotfiles/dot_bash_profile" "$pkgdir/etc/skel/.bash_profile"
+  install -Dm644 "$srcdir/torchos-hyprland.sh" "$pkgdir/etc/profile.d/torchos-hyprland.sh"
   # chezmoi-shaped source also ships for `chezmoi init --source`.
   install -d "$pkgdir/usr/share/torchos"
   cp -a "$srcdir/src/dotfiles" "$pkgdir/usr/share/torchos/dotfiles"
@@ -63,7 +63,7 @@ package_torch-release() {
   depends=(filesystem)
   install -Dm644 "$srcdir/os-release" "$pkgdir/usr/share/torchos/os-release"
   install -Dm644 "$srcdir/torchos-os-release.hook" "$pkgdir/usr/share/libalpm/hooks/torchos-os-release.hook"
-  printf 'TorchOS \\r (\\l)\n\n' | install -Dm644 /dev/stdin "$pkgdir/etc/issue"
+  printf 'TorchOS \\r (\\l)\n\n' | install -Dm644 /dev/stdin "$pkgdir/etc/issue.d/torchos.issue"
 }
 
 package_torch-installer-config() {
