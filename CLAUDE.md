@@ -16,7 +16,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **No passwordless sudo on this host.** Any privileged one-time setup step needs the owner to run it
   themselves (suggest `! <command>`) — don't attempt to route around this.
 
-## Status: reboot in progress, Phase 1 in flight
+## Status: installable ISO works end to end in a VM (pre-release, 2026-09-27)
+
+**Read `docs/handoff.md` first** — current verified state, how to resume on Linux or Windows/WSL2, the
+prioritized open work, and the test-harness gotchas. This file keeps the durable rules and decisions.
 
 TorchOS v2 is a from-scratch rebuild, approved 2026-08-24. Full rationale for every decision below:
 **`docs/superpowers/specs/2026-08-24-torchos-v2-architecture-design.md`** (the locked spec) and its
@@ -31,7 +34,7 @@ foundation. See `legacy/v1/README.md` for what was kept vs. discarded and why.
 
 | Area | Decision | Fallback if it doesn't work out |
 |---|---|---|
-| Base distro | **CachyOS** (Arch family) | EndeavourOS, then openSUSE Tumbleweed |
+| Base distro | **CachyOS** (Arch family). *v0.2 ISO deliberately composes from signed Arch repos + a local `torchos` repo; CachyOS repo/kernel is a later opt-in layer — `docs/decisions/0001-base-and-composition.md`* | EndeavourOS, then openSUSE Tumbleweed |
 | Desktop | **Hyprland**, forking Omarchy's architecture (not branding) | — |
 | GPU driver | **i915** default, Xe opt-in (Lunar Lake/Battlemage-class hw only) | — |
 | Recovery | **Snapper + snap-pac + grub-btrfs + Btrfs Assistant** (fallback triggered — see Gotchas) | — |
@@ -39,7 +42,7 @@ foundation. See `legacy/v1/README.md` for what was kept vs. discarded and why.
 | Compatibility | `torch install`: pacman → Flatpak → gated AUR → Distrobox → AppImage → Wine/Bottles/Proton/Lutris | — |
 | Privilege broker | **`torchd`**: polkit-actions-shaped daemon over a Unix socket (SO_PEERCRED-verified), wraps systemd D-Bus + PackageKit, hand-builds only `snapshot.rollback` | — |
 | AI integration | **Claude Agent SDK** (long-lived daemon) + custom MCP server over `torchd`; auth via Claude Code subscription's Agent-SDK credit, not console API billing | — |
-| Installer | Fork CachyOS's `cachyos-calamares` + an Omarchy-style provisioner layer | — |
+| Installer | Calamares 3.4.2 (AUR recipe built into the local repo) + our config in `image/calamares/` — configuration only, no fork (a fork was not needed to reach a working install) | — |
 | Branding | v1's palette hexes kept (`#ff4500`/`#ff6a00`/`#2b0a00`), but the mark itself redone 2026-08-26 — see Status checklist and `assets/branding/` | — |
 
 Priority order, always: **Convenience > Compatibility > Reliability > Recoverability > Security > Elegance > Novelty.**
@@ -84,12 +87,11 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
 - [ ] Phase 1 implementation plan formally written (`writing-plans`) — went straight to execution
       instead, per the `/goal` directive; worth writing retroactively if this needs to be resumed
       by a fresh session
-- [x] Branding refresh (2026-08-26, design-only session, see **HANDOFF** below for what's next):
+- [x] Branding refresh (2026-08-26, design-only session, see `docs/handoff.md`):
       new torch mark cropped/recolored from a reference image, then a full asset set built from it —
       badge + reversed badge, circle-only transparent variants, a 16→512px icon-size set, a standalone
       recolorable silhouette (`torch-mark.png`), and dark/light desktop wallpapers. All in
-      `assets/branding/`, **not yet committed** — untracked, needs an explicit go-ahead before
-      `git add`/`commit` (not done unprompted per this session's git rule).
+      `assets/branding/` (committed 2026-09-21; the wallpaper generator is `scripts/branding/`).
 - [x] Group A (desktop polish: app bundle, Hyprland/waybar/GTK theming, QoL keybinds, first-boot
       status dashboard, chezmoi dotfiles) — spec'd, planned, and executed via
       `subagent-driven-development`, all 6 tasks implemented and reviewed (real per-task reviews
@@ -97,49 +99,51 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       Spec: `docs/superpowers/specs/2026-08-26-desktop-polish-design.md`. `dotfiles/` now exists and
       is deployed to the Phase 1 VM via chezmoi; `scripts/install-apps.sh` and
       `scripts/verify_palette.py` are real and verified end-to-end on the VM. Known open items, not
-      blocking: (1) `torch`/`torch-welcome` are only on `$PATH` via a hand-made VM symlink, no repo
-      step installs them there yet — see the `install` Gotcha below; (2) the branding
+      blocking: (1) *[resolved 2026-09: `torch-cli`/`torch-welcome` are now native packages]*; (2) the branding
       wallpaper's real config (`hyprpaper.conf`) is shipped and correct but doesn't render on this
       VM due to a DRM/GBM permission issue — see the `gpu / hyprland-in-vm` Gotcha.
 - [ ] Group B (Mint-style installer partitioning / Calamares fork) — not started, deliberately
       deferred until after Group A per the owner's own sequencing choice. Don't start this without a
       fresh `superpowers:brainstorming` pass — it hasn't had one yet.
-- [ ] Phase 2: `torchd` + polkit action set
+- [x] Phase 2: `torchd` — 5 ops over a `SO_PEERCRED` socket, policy engine, audit log, hardened systemd
+      unit, `torch` CLI as client; all 9 plan tasks verified (see the STATUS block in the plan). Note it is
+      a *polkit-shaped* broker over a socket, not polkit itself. `snapshot.rollback` is hand-built for
+      the TorchOS Btrfs layout (`snapper rollback` does not work here) and verified across a reboot.
+- [x] ISO campaign (2026-09-21..27): package manifests + validator, split PKGBUILD (`torch-cli`,
+      `torch-welcome`, `torch-config`, `torch-branding`, `torch-release`, `torch-installer-config`),
+      local `torchos` repo, Archiso profile, Calamares config. **Verified in QEMU/OVMF from a blank disk:**
+      ISO boots → live Hyprland desktop → Calamares erase-disk Btrfs install → ISO detached, disk boots
+      by itself → desktop + `torch doctor` all OK → checkpoint → change → `torch snapshot rollback` →
+      reboot → system change reverted, `/home` kept, snapshots intact. Details and open work: `docs/handoff.md`.
 - [ ] Phase 3: AI assistant (Agent SDK + MCP) wired to `torchd`
 - [ ] Phase 4: `torch install` compatibility resolver
-- [ ] Phase 5: Calamares installer fork
+- [~] Phase 5: installer — works via config (above); not a fork; Group B (manual partitioning polish, LUKS, dual boot) not started
 - [ ] Phase 6: real Intel-iGPU hardware validation
 
-## HANDOFF (2026-08-30): resume here for the next session
+## HANDOFF (2026-09-27)
 
-Group A (desktop polish) is done — spec'd, planned, executed task-by-task via
-`subagent-driven-development` with real per-task review + fix loops, then a whole-branch review with
-its own fix pass. See the Status checklist entry above for what shipped and its two known open items
-(`torch`/`torch-welcome` not on `$PATH` from a fresh install; hyprpaper's wallpaper doesn't render on
-this VM's GPU setup). This section is the handoff for whoever picks up next; delete/replace it once
-acted on rather than letting it go stale.
-
-**Immediate housekeeping, still outstanding:**
-- `assets/branding/`, `scripts/branding/`, `docs/superpowers/specs/2026-08-26-desktop-polish-design.md`,
-  `docs/superpowers/specs/2026-08-26-os-essentials-security-design.md`, and
-  `docs/superpowers/plans/` are all still untracked as of this handoff — genuinely governing documents
-  (the spec Group A implements, the plan that was executed, the branding assets `dotfiles/` now
-  references a copy of) that haven't shipped in any commit yet. Asked the owner whether to commit them
-  during the Group A execution session; **still pending an explicit answer as of this handoff** — don't
-  commit them without one.
-
-**What's next:**
-- Group B (Mint-style installer partitioning / Calamares fork) — not started, deliberately deferred.
-  Needs its own fresh `superpowers:brainstorming` pass before any implementation — it hasn't had one.
-- A second spec, `docs/superpowers/specs/2026-08-26-os-essentials-security-design.md` (kernel/memory
-  tuning, updates policy, firewall, backups, and a substantial `torchd` design grounded in real
-  precedent research), was written and self-reviewed in an earlier session but **never got the
-  owner's file-level review or a `writing-plans` pass** — still sitting as a spec only. Worth checking
-  with the owner whether that's next, before Group B or Phase 2.
-- Phase 2 (`torchd` + polkit action set) is the next phase-level item on the roadmap if the owner
-  wants to go there directly instead.
+Full handoff: **`docs/handoff.md`**. In one paragraph: the blank-disk → installed → recovered journey works
+in a VM; what remains is hosting the package repo, hardware validation, the CachyOS layer, LUKS/BIOS/dual
+boot, Secure Boot, release engineering, and desktop polish. Nothing is pushed (`master` is ahead of
+`origin/master`); commit history is the decision record. **Never commit** `image/vm/`, `image/out/`,
+`image/repo/`, `image/build/` (all gitignored) or any credential.
 
 ## Gotchas
+
+### iso / installer (2026-09, all found by real runs — full list in docs/handoff.md)
+- **Calamares unpacks with a hard-coded `rsync -aHAXSr`; `-S` turns a kernel's trailing zero padding into a
+  hole at EOF.** Linux reads it fine, but GRUB's btrfs driver stops early: `error: premature end of file
+  /@/boot/vmlinuz-*`, and the VM looks like it "ignores Enter" (it boots-fails-returns to the menu). Kernels
+  are copied densely in `torch-target-setup`. Diagnose with `grub-fstest /dev/vdaN cat /@/boot/vmlinuz-linux | wc -c`.
+- The `archlinux:base-devel` container's `pacman.conf` has `NoExtract` for locales/man/docs/`etc/pacman.conf`;
+  `build-iso.sh` strips it. `pacman-mirrorlist` ships fully commented out; the profile ships a mirrorlist.
+- `torchd.service` cannot use `ProtectSystem=`, `PrivateDevices=`, or a bare capability set: pacman hooks
+  (snap-pac needs `CAP_SYS_PTRACE`), `chown`, and the rollback's `mount` all break. Comments in the unit list each.
+- `snapper rollback` does not work on this layout; `torchd` swaps `@` itself. Snapshots live in a separate
+  `@snapshots` subvolume at `/.snapshots` (not nested in `@`) so the swap never loses them.
+- `grub-btrfsd.service` (not `grub-btrfs.path`) is the unit on Arch and it needs `inotify-tools`.
+- QEMU monitor `sendkey ret` needs a hold (`sendkey ret 600`) in GRUB/OVMF; VNC keys need explicit Shift.
+  Both are handled in `image/scripts/dev/`.
 
 Categorized per subsystem, per the VibeOS research recommendation (a flat list gets unwieldy fast).
 
