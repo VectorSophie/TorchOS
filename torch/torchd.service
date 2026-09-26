@@ -13,20 +13,21 @@ RuntimeDirectoryMode=0755
 LogsDirectory=torchd
 LogsDirectoryMode=0750
 
-# Hardening is deliberately partial: torchd runs pacman/snapper/systemctl as
-# root and every child (pacman hooks, ldconfig, ...) inherits these limits, so
-# ProtectSystem=, RestrictNamespaces= and MemoryDenyWriteExecute= would break
-# real package transactions. Keep only what the ops provably don't need.
+# Hardening is deliberately partial: torchd runs pacman/snapper/systemctl/btrfs as root and every
+# child (pacman hooks, snap-pac, ldconfig, ...) inherits these limits. Each omission below was found
+# by a real failure, not guessed:
+#   ProtectSystem=, RestrictNamespaces=, MemoryDenyWriteExecute= : break pacman transactions
+#   PrivateDevices=   : hides /dev/vdaN, so the rollback cannot mount the top-level Btrfs
+#   CAP_SYS_PTRACE    : snap-pac's hook stats /proc/1/root and dies with EACCES without it
 NoNewPrivileges=true
 PrivateTmp=true
-PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 LockPersonality=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_KILL CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_SYS_ADMIN CAP_SYS_CHROOT CAP_MKNOD CAP_SETFCAP CAP_AUDIT_WRITE
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_KILL CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_SYS_CHROOT CAP_MKNOD CAP_SETFCAP CAP_AUDIT_WRITE
 
 [Install]
 WantedBy=multi-user.target
