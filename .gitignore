@@ -15,3 +15,4 @@ image/out/
 image/vm/*.fd
 image/vm/*.log
 image/vm/*.sock
+image/vm/.testpw
