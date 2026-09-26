@@ -14,7 +14,7 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 | installed system boots without the ISO; desktop; `doctor` all OK | VERIFIED |
 | checkpoint -> change -> `torch snapshot rollback` -> reboot; `/home` kept | VERIFIED |
 | pacman transactions through `torchd` get automatic pre/post snapshots (snap-pac) | VERIFIED |
-| packaged `torchd.service` (CAP_SYS_PTRACE, no PrivateDevices) from a clean install | fix verified by drop-in; clean-install re-verification pending |
+| packaged `torchd.service` (CAP_SYS_PTRACE, no PrivateDevices) from a clean install, full update + rollback + reboot | VERIFIED (no drop-ins) |
 | booting a snapshot from the GRUB "TorchOS snapshots" submenu | UNVERIFIED (entry exists) |
 | CachyOS kernel/repo | not included (decision 0001) |
 | BIOS install, LUKS, manual partitioning, dual boot, Secure Boot | unsupported / untested |

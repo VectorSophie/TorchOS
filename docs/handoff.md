@@ -88,9 +88,9 @@ virtualization). A Windows session should hand ISO artifacts to a Linux run rath
 
 ## 4. Open work, by priority
 
-1. **Verify the packaged `torchd` unit from a clean install** *(Linux/KVM)*. `CAP_SYS_PTRACE` was added and
-   `PrivateDevices` removed after each was proven by drop-in on a running VM; a fresh install with the
-   packaged unit (dev ISO build in progress when this was written) confirms it end to end.
+1. *(done 2026-09-27)* The packaged `torchd` unit (CAP_SYS_PTRACE added, PrivateDevices removed) was
+   re-verified from a clean blank-disk install with no drop-ins: `torch update`, snap-pac snapshots,
+   `torch snapshot rollback`, reboot, `/home` preserved.
 2. **Boot a snapshot from the GRUB submenu** *(Linux/KVM)*: pick *TorchOS snapshots*, boot a read-only snapshot,
    note what happens to writes (grub-btrfs overlay). Update `docs/recovery.md` with the observed result.
 3. **Hosted package repo** *(no VM needed)*. Installed systems only know Arch's repos; `torch-*` packages are in a
