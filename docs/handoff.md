@@ -120,8 +120,11 @@ virtualization). A Windows session should hand ISO artifacts to a Linux run rath
 - [x] no reusable plaintext credential committed (`image/vm/user_credentials.json` untracked; old value remains in
       git history: rewrite only with the owner's say-so)
 - [x] VM disks and ISOs ignored by Git
-- [ ] release ISO built **without** `DEV_SSH_PUBKEY`, checksum recorded, live boot smoke-tested
-- [ ] `docs/known-issues.md` reconciled with section 1 above
+- [x] release ISO built **without** `DEV_SSH_PUBKEY`, live boot smoke-tested (UEFI/OVMF: autologin -> Hyprland ->
+      Calamares welcome). Local artifact `image/out/torchos-2026.09.26-x86_64.iso`, 3236495360 bytes,
+      SHA-256 `b0433f052348f65338c2a386c5a7595a9094487e967dba2dfea1096ae9e30dd9`. Not bit-for-bit reproducible
+      (section 4, item 11): a rebuild will differ. The full install/rollback run used the equivalent *dev* ISO.
+- [x] `docs/known-issues.md` reconciled with section 1 above
 - [ ] install and recovery guides walked through by someone who did not write them
 
 ## 6. Supported / unsupported (today)

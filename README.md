@@ -13,7 +13,7 @@ not verified. No AI functionality is included.
 ```bash
 image/scripts/build-packages.sh      # TorchOS packages + reviewed AUR recipes -> image/repo/
 image/scripts/build-iso.sh           # live ISO -> image/out/  (needs docker)
-image/scripts/run-qemu.sh iso        # boots the ISO against a fresh blank 40G UEFI disk
+RAM=4096 image/scripts/run-qemu.sh iso   # boots the ISO against a fresh blank 40G UEFI disk (GTK window; RAM=4096 recommended)
 # install from the live desktop (Calamares opens automatically, or SUPER+I), reboot, then:
 image/scripts/run-qemu.sh disk       # boot the installed system with no ISO attached
 ```
