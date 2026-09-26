@@ -25,7 +25,13 @@ rm -f /etc/systemd/system/systemd-firstboot.service
 ## 2. Normal initramfs (the live one boots through archiso hooks) for every installed kernel.
 for d in /usr/lib/modules/*/; do
   base=$(cat "$d/pkgbase" 2>/dev/null) || continue
-  [ -f "$d/vmlinuz" ] && install -Dm644 "$d/vmlinuz" "/boot/vmlinuz-$base"
+  # Calamares unpacks with `rsync -S`, which turns the kernel's trailing zero padding into a hole at
+  # EOF. Linux reads that fine but GRUB's btrfs driver stops at the last real extent ("premature end
+  # of file"). Copy densely, no reflink, so the tail is real data. Verified with grub-fstest.
+  if [ -f "$d/vmlinuz" ]; then
+    cp --sparse=never --reflink=never "$d/vmlinuz" "/boot/vmlinuz-$base" && chmod 644 "/boot/vmlinuz-$base"
+    cmp -s "$d/vmlinuz" "/boot/vmlinuz-$base" || echo "ERROR: /boot/vmlinuz-$base differs from source"
+  fi
   cat > "/etc/mkinitcpio.d/$base.preset" <<PRESET
 ALL_kver="/boot/vmlinuz-$base"
 PRESETS=('default' 'fallback')
@@ -42,17 +48,28 @@ mkdir -p /etc/systemd
 printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
 for u in NetworkManager.service bluetooth.service torchd.service power-profiles-daemon.service \
          systemd-timesyncd.service fstrim.timer cups.socket \
-         snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path; do
+         snapper-timeline.timer snapper-cleanup.timer grub-btrfsd.service; do
   systemctl enable "$u" || echo "WARN: could not enable $u"
 done
 
 ## 4. Snapper on the root Btrfs (skipped cleanly on non-Btrfs roots) + the first checkpoint,
 ##    taken *before* grub-mkconfig so grub-btrfs sees it.
-if [ "$(findmnt -no FSTYPE /)" = btrfs ]; then
-  snapper --no-dbus -c root create-config / \
-    && snapper --no-dbus -c root set-config TIMELINE_CREATE=no NUMBER_LIMIT=10 NUMBER_LIMIT_IMPORTANT=6 \
-    && snapper --no-dbus -c root create -d "TorchOS fresh install" -u important=yes \
-    || echo "WARN: snapper setup failed"
+##    Layout: snapshots live in the separate @snapshots subvolume mounted at /.snapshots (already in
+##    fstab from Calamares), NOT nested in @, so swapping @ during a rollback never loses them.
+##    snapper create-config refuses an existing /.snapshots and makes its own nested subvolume, so:
+##    unmount ours, let snapper create, delete the nested one, remount ours.
+if [ "$(findmnt -no FSTYPE /)" = btrfs ] && grep -q '/.snapshots' /etc/fstab; then
+  umount /.snapshots 2>/dev/null; rmdir /.snapshots 2>/dev/null
+  if snapper --no-dbus -c root create-config /; then
+    btrfs subvolume delete /.snapshots
+    mkdir -p /.snapshots && chmod 750 /.snapshots
+    mount /.snapshots || echo "ERROR: could not mount /.snapshots"
+    snapper --no-dbus -c root set-config TIMELINE_CREATE=no NUMBER_LIMIT=10 NUMBER_LIMIT_IMPORTANT=6 \
+        ALLOW_GROUPS=wheel SYNC_ACL=yes
+    snapper --no-dbus -c root create -d "TorchOS fresh install" -u important=yes
+  else
+    echo "WARN: snapper create-config failed"
+  fi
 fi
 
 ## 5. Development ISOs only (build-iso.sh with DEV_SSH_PUBKEY): keep sshd + serial console for testing.

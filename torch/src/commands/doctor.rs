@@ -96,10 +96,10 @@ pub fn collect() -> Vec<Check> {
         check("snapper", Level::Warn, "no root config")
     });
 
-    c.push(if unit_enabled("grub-btrfs.path") {
-        check("boot-menu snapshots", Level::Ok, "grub-btrfs.path enabled")
+    c.push(if unit_enabled("grub-btrfsd.service") {
+        check("boot-menu snapshots", Level::Ok, "grub-btrfsd.service enabled")
     } else {
-        check("boot-menu snapshots", Level::Warn, "grub-btrfs.path not enabled")
+        check("boot-menu snapshots", Level::Warn, "grub-btrfsd.service not enabled")
     });
 
     let kernels = installed_kernels();

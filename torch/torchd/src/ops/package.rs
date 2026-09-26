@@ -29,7 +29,9 @@ fn run(flags: &[&str], verb: &str, args: &serde_json::Value) -> Result<String> {
 }
 
 pub fn install(args: &serde_json::Value) -> Result<String> {
-    run(&["-S", "--needed"], "installed", args)
+    // -Syu, never a bare -Sy: Arch does not support partial upgrades, and a fresh install has no sync
+    // databases at all. snap-pac takes the pre/post snapshots around this.
+    run(&["-Syu", "--needed"], "installed (system upgraded)", args)
 }
 
 pub fn remove(args: &serde_json::Value) -> Result<String> {
