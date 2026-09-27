@@ -5,6 +5,9 @@ mod commands {
     pub mod diagnose;
     pub mod doctor;
     pub mod gpu;
+    pub mod hardware;
+    pub mod install;
+    pub mod kernel;
     pub mod service;
     pub mod snapshot;
     pub mod status;
@@ -26,7 +29,7 @@ mod torchd_client;
 
 #[derive(Parser)]
 #[command(name = "torch")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "TorchOS CLI — the single human-facing interface to the system", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -52,11 +55,38 @@ enum Commands {
         #[command(subcommand)]
         action: SnapshotAction,
     },
-    /// Install packages via torchd
+    /// Upgrade the whole system, or install repo packages (always with a full upgrade: Arch has no partial upgrades)
     Update {
-        /// Package names to install
+        /// Package names to install; none = just upgrade everything
         packages: Vec<String>,
     },
+    /// Install anything: repo package, Flathub app, AUR package (--aur), a Debian package in a
+    /// container (--distrobox), or a file (.pkg.tar.zst, .AppImage, .flatpakref, .exe/.msi, .deb, .rpm)
+    Install {
+        /// Package/app name or path to a file
+        target: String,
+        /// Allow the AUR (community-maintained, unreviewed): shows the PKGBUILD and asks before building
+        #[arg(long)]
+        aur: bool,
+        /// Only look on Flathub
+        #[arg(long, conflicts_with = "aur")]
+        flatpak: bool,
+        /// Install a Debian package into a Distrobox container and export it to the desktop
+        #[arg(long, conflicts_with_all = ["aur", "flatpak"])]
+        distrobox: bool,
+    },
+    /// Remove repo packages via torchd (asks for confirmation)
+    Remove {
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
+    /// Kernels: list installed ones, add another (incl. the CachyOS kernel layer)
+    Kernel {
+        #[command(subcommand)]
+        action: KernelAction,
+    },
+    /// Hardware summary: CPU level, GPUs + drivers in use, memory, disks, firmware/Secure Boot
+    Hardware,
     /// Manage systemd services via torchd
     Service {
         #[command(subcommand)]
@@ -78,6 +108,14 @@ enum SnapshotAction {
         /// Snapshot number, from `torch snapshot list`
         snapshot_id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum KernelAction {
+    /// Installed and running kernels
+    List,
+    /// Install another kernel: linux, linux-lts, linux-zen, linux-hardened, linux-cachyos
+    Add { name: String },
 }
 
 #[derive(Subcommand)]
@@ -104,6 +142,16 @@ fn main() -> ExitCode {
         }
         .map(|_| 0),
         Commands::Update { packages } => commands::update::run(&packages).map(|_| 0),
+        Commands::Install { target, aur, flatpak, distrobox } => {
+            commands::install::run(&target, aur, flatpak, distrobox).map(|_| 0)
+        }
+        Commands::Remove { packages } => commands::update::remove(&packages).map(|_| 0),
+        Commands::Kernel { action } => match action {
+            KernelAction::List => commands::kernel::list(),
+            KernelAction::Add { name } => commands::kernel::add(&name),
+        }
+        .map(|_| 0),
+        Commands::Hardware => commands::hardware::run().map(|_| 0),
         Commands::Service { action } => match action {
             ServiceAction::Restart { name } => commands::service::restart(&name).map(|_| 0),
         },

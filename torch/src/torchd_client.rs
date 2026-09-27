@@ -37,8 +37,15 @@ fn send(request_id: &str, op: &str, args: &serde_json::Value, token: Option<&str
     if let Some(t) = token {
         req["confirm_token"] = t.into();
     }
-    let mut stream = UnixStream::connect(SOCKET_PATH)
-        .with_context(|| format!("connecting to {SOCKET_PATH} — is torchd running, and are you in the torch-agent group?"))?;
+    let mut stream = UnixStream::connect(SOCKET_PATH).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
+            anyhow::anyhow!("torchd is not running (check: systemctl status torchd)")
+        }
+        std::io::ErrorKind::PermissionDenied => anyhow::anyhow!(
+            "not allowed to talk to torchd: add yourself to the torch-agent group, then log out and back in"
+        ),
+        _ => anyhow::Error::new(e).context(format!("connecting to {SOCKET_PATH}")),
+    })?;
     writeln!(stream, "{req}")?;
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;

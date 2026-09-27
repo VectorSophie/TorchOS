@@ -1,4 +1,5 @@
 hyprland hypridle hyprlock hyprpaper hyprpicker uwsm
+greetd greetd-tuigreet  # login: text greeter on tty1 (installed systems; the live ISO autologins)
 xdg-desktop-portal-hyprland xdg-desktop-portal-gtk polkit-gnome
 waybar wofi mako swayosd kitty
 nautilus gvfs gvfs-mtp gvfs-smb sushi gnome-disk-utility

@@ -1,15 +1,16 @@
 # Maintainer: TorchOS <https://github.com/VectorSophie/TorchOS>
-# Split package: one Rust build, five installable pieces.
+# Split package: one Rust build, seven installable pieces.
 pkgbase=torchos
-pkgname=(torch-cli torch-welcome torch-config torch-branding torch-release torch-installer-config)
+pkgname=(torch-cli torch-welcome torch-config torch-branding torch-release torch-installer-config torchos-keyring)
 pkgver=0.2.0
 pkgrel=1
 arch=(x86_64)
 url="https://github.com/VectorSophie/TorchOS"
 license=(MIT)
 makedepends=(cargo gtk4 pkgconf)
-source=(torchos-src.tar.gz torchd.sysusers os-release torchos-os-release.hook torchos-hyprland.sh)
-sha256sums=(SKIP SKIP SKIP SKIP SKIP)
+source=(torchos-src.tar.gz torchd.sysusers os-release torchos-os-release.hook
+        torchos.gpg torchos-trusted torchos-revoked)
+sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
 
 build() {
   cd "$srcdir/src/torch"
@@ -38,10 +39,9 @@ package_torch-welcome() {
 
 package_torch-config() {
   pkgdesc="TorchOS default Hyprland/Waybar/Wofi session configuration (new-user skeleton)"
-  depends=(hyprland waybar wofi wlogout hypridle hyprlock hyprpaper mako)
+  depends=(hyprland waybar wofi wlogout hypridle hyprlock hyprpaper mako greetd greetd-tuigreet)
   install -d "$pkgdir/etc/skel"
   cp -a "$srcdir/src/dotfiles/dot_config" "$pkgdir/etc/skel/.config"
-  install -Dm644 "$srcdir/torchos-hyprland.sh" "$pkgdir/etc/profile.d/torchos-hyprland.sh"
   # chezmoi-shaped source also ships for `chezmoi init --source`.
   install -d "$pkgdir/usr/share/torchos"
   cp -a "$srcdir/src/dotfiles" "$pkgdir/usr/share/torchos/dotfiles"
@@ -74,4 +74,13 @@ package_torch-installer-config() {
   install -Dm644 "$srcdir/src/assets/branding/icons/logo-128.png" "$pkgdir/etc/calamares/branding/torchos/logo.png"
   install -Dm644 "$srcdir/src/assets/branding/logo-badge.png" "$pkgdir/etc/calamares/branding/torchos/welcome.png"
   install -Dm755 "$srcdir/src/image/calamares/usr/lib/torchos/torch-target-setup" "$pkgdir/usr/lib/torchos/torch-target-setup"
+}
+
+package_torchos-keyring() {
+  pkgdesc="Public key that signs the TorchOS package repository"
+  arch=(any)
+  install=torchos-keyring.install
+  for f in torchos.gpg torchos-trusted torchos-revoked; do
+    install -Dm644 "$srcdir/$f" "$pkgdir/usr/share/pacman/keyrings/$f"
+  done
 }

@@ -29,7 +29,9 @@ pub fn decide(op: &str, tier: Tier, has_confirmation: bool) -> Decision {
 
     // snapshot.rollback always confirms, even in Trust — per the design spec's
     // §3, rollback is high-danger enough that no autonomy tier auto-runs it.
-    if op == "snapshot.rollback" {
+    // Installing a local package file (AUR builds) runs arbitrary install scripts as root,
+    // and adding a kernel changes what boots: same treatment.
+    if matches!(op, "snapshot.rollback" | "package.install_file" | "kernel.install") {
         return if has_confirmation {
             Decision::AutoApprove
         } else {
@@ -37,7 +39,7 @@ pub fn decide(op: &str, tier: Tier, has_confirmation: bool) -> Decision {
         };
     }
 
-    let auto_runs_immediately = matches!(op, "snapshot.create" | "package.install");
+    let auto_runs_immediately = matches!(op, "snapshot.create" | "package.install" | "system.upgrade");
     if tier == Tier::Trust || auto_runs_immediately {
         return Decision::AutoApprove;
     }
@@ -88,6 +90,17 @@ mod tests {
         assert_eq!(decide("snapshot.rollback", Tier::Trust, false), Decision::NeedsConfirmation);
         assert_eq!(decide("snapshot.rollback", Tier::Trust, true), Decision::AutoApprove);
         assert_eq!(decide("snapshot.rollback", Tier::Auto, false), Decision::NeedsConfirmation);
+    }
+
+    #[test]
+    fn root_level_changes_always_confirm() {
+        for op in ["package.install_file", "kernel.install"] {
+            for tier in [Tier::Auto, Tier::Trust] {
+                assert_eq!(decide(op, tier, false), Decision::NeedsConfirmation);
+                assert_eq!(decide(op, tier, true), Decision::AutoApprove);
+            }
+        }
+        assert_eq!(decide("system.upgrade", Tier::Auto, false), Decision::AutoApprove);
     }
 
     #[test]

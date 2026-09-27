@@ -97,6 +97,9 @@ fn build_ui(app: &Application) {
     for (label, value) in rows {
         let row = Label::new(Some(&format!("{label}: {value}")));
         row.set_halign(Align::Start);
+        row.set_xalign(0.0);
+        row.set_wrap(true); // long failed-unit lists used to run off the window
+        row.set_max_width_chars(60);
         row.add_css_class("welcome-row");
         container.append(&row);
     }

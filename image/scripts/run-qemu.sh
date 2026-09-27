@@ -7,7 +7,7 @@
 #   run-qemu.sh blank-reset          delete and recreate the blank disk + its OVMF vars
 #
 # Env: RAM=2048 CPUS=2 DISPLAY_MODE=gtk|vnc (default gtk; vnc listens on :1 = port 5901)
-#      RENDER=blob|plain (default blob)  SSH_PORT=2222 (guest :22 forwarded to host localhost)
+#      RENDER=blob|virgl|plain (default blob; virgl on WSL2)  SSH_PORT=2222 (guest :22 forwarded to host localhost)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 MODE=${1:-installed}
@@ -27,8 +27,14 @@ esac
 
 # blob=true + memfd is what lets Hyprland/aquamarine render in this VM (see CLAUDE.md gotchas);
 # needs /dev/udmabuf access (kvm group). RENDER=plain drops it if that is unavailable.
+# RENDER=virgl is for hosts without udmabuf (WSL2's kernel). Plain std VGA does not work there:
+# Hyprland finds no render node and draws nothing.
 if [[ ${RENDER:-blob} == blob ]]; then
   GPU=(-object memory-backend-memfd,id=mem1,size="${RAM}M" -machine memory-backend=mem1 -device virtio-gpu-pci,blob=true,hostmem=256M)
+elif [[ $RENDER == virgl ]]; then
+  # virgl 3D through the host's GL (WSLg): needs a GL window, so it forces -display gtk,gl=on;
+  # VNC stays on :1 for scripted input and `vnc.py shot` (the monitor's screendump fails with GL).
+  GPU=(-device virtio-vga-gl,xres=1280,yres=800); DISP=(-display gtk,gl=on -vnc :1)
 else
   GPU=(-device virtio-gpu-pci)
 fi

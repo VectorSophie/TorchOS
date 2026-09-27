@@ -115,22 +115,46 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       ISO boots → live Hyprland desktop → Calamares erase-disk Btrfs install → ISO detached, disk boots
       by itself → desktop + `torch doctor` all OK → checkpoint → change → `torch snapshot rollback` →
       reboot → system change reverted, `/home` kept, snapshots intact. Details and open work: `docs/handoff.md`.
+- [x] Rough-edge pass (2026-09-27, second session, run entirely in WSL2 with nested KVM): torchd confirmation
+      tokens validated (single use, bound to op/args/uid); `torch update` = full upgrade with a network wait;
+      greetd + tuigreet login; GRUB defaults to `linux`, no BootNext clutter; grub-btrfs overlay hook so snapshot
+      boots work (verified); live-ISO `systemd-loop@sr0` masked; installer removes itself; signed `[torchos]` repo +
+      `torchos-keyring` + sign/publish scripts (not yet published); `torch doctor` live/snapshot-boot aware.
 - [ ] Phase 3: AI assistant (Agent SDK + MCP) wired to `torchd`
-- [ ] Phase 4: `torch install` compatibility resolver
+- [x] Phase 4: `torch install` resolver — repo → Flathub → gated AUR → Distrobox, plus files (.pkg.tar.zst,
+      .AppImage, .flatpakref, .exe/.msi, .deb, .rpm). Repo/AUR/AppImage/Distrobox verified in the VM; Flatpak
+      install, Wine and .rpm not exercised.
+- [x] CachyOS layer: `torch kernel add linux-cachyos` (generic `[cachyos]` after the Arch repos, kernel only),
+      verified booting — `docs/decisions/0001`.
 - [~] Phase 5: installer — works via config (above); not a fork; Group B (manual partitioning polish, LUKS, dual boot) not started
 - [ ] Phase 6: real Intel-iGPU hardware validation
 
-## HANDOFF (2026-09-27)
+## HANDOFF (2026-09-27, second session)
 
-Full handoff: **`docs/handoff.md`**. In one paragraph: the blank-disk → installed → recovered journey works
-in a VM; what remains is hosting the package repo, hardware validation, the CachyOS layer, LUKS/BIOS/dual
-boot, Secure Boot, release engineering, and desktop polish. Nothing is pushed (`master` is ahead of
-`origin/master`); commit history is the decision record. **Never commit** `image/vm/`, `image/out/`,
-`image/repo/`, `image/build/` (all gitignored) or any credential.
+Full handoff: **`docs/handoff.md`**. In one paragraph: blank disk → install → greetd login → signed-repo update →
+CachyOS kernel → snapshot boot → rollback all work in a VM, and the whole loop runs on the owner's Windows machine
+in WSL2 (`RENDER=virgl`). What remains: **publishing the package repo** (until then `torch update` fails on installed
+systems), a release ISO from the final tree, real hardware, LUKS/BIOS/dual boot, Secure Boot. Nothing is pushed
+(`master` is ahead of `origin/master`); commit history is the decision record. **Never commit** `image/vm/`,
+`image/out/`, `image/repo/`, `image/build/` (all gitignored), any credential, or the signing key (`~/.torchos-signing`).
 
 ## Gotchas
 
 ### iso / installer (2026-09, all found by real runs — full list in docs/handoff.md)
+- **`ProtectKernelModules=` in torchd.service makes `/usr/lib/modules` read-only** for every child: any kernel
+  install *or routine kernel upgrade* through torchd fails (`Partition /usr/lib/modules is mounted read only`).
+  Removed; listed in the unit's omission comments. Found by `torch kernel add`.
+- **Calamares `grubcfg` ignores its `defaults:` when `/etc/default/grub` exists** (it always does on Arch) unless
+  `always_use_defaults: true`. `GRUB_TOP_LEVEL` and `GRUB_DISABLE_SUBMENU` had silently never applied.
+- **Removing `mkinitcpio-archiso` fires pacman's mkinitcpio hook** (a rebuild of every preset). `torch-target-setup`
+  uses that as *the* initramfs build instead of also running `mkinitcpio -P` (saved ~3 min per install).
+- **Arch's default initramfs is systemd-based; grub-btrfs's `grub-btrfs-overlayfs` hook is busybox-only.** TorchOS
+  uses busybox HOOKS (`/etc/mkinitcpio.conf.d/torchos.conf`) so snapshot boots get a writable overlay.
+- **`systemd-loop@sr0.service` fails on archiso optical boots** (systemd#43605: `systemd-dissect --attach` cannot
+  handle ISO9660+squashfs). Masked on the live ISO only.
+- **`SigLevel = Optional TrustAll` still verifies a signature that exists**: a signed repo with an unknown key fails.
+  The ISO build imports + lsigns the TorchOS key and uses default (required) signature checking.
+- **Hyprland 0.56 wants `start-hyprland`** (a watchdog wrapper); the live profile.d and greetd both launch that.
 - **Calamares unpacks with a hard-coded `rsync -aHAXSr`; `-S` turns a kernel's trailing zero padding into a
   hole at EOF.** Linux reads it fine, but GRUB's btrfs driver stops early: `error: premature end of file
   /@/boot/vmlinuz-*`, and the VM looks like it "ignores Enter" (it boots-fails-returns to the menu). Kernels
@@ -426,7 +450,11 @@ continuity across sessions; don't build a logging system ahead of needing one.
 
 ## Environment notes (this dev/test machine)
 
-Linux Mint 22.2, apt-based. Bare metal (not nested virtualization), Intel VT-x present, `/dev/kvm`
+**Second machine: Windows 11 + WSL2 (Ubuntu 24.04), 16 GB.** WSL2 has nested KVM, native Docker, QEMU 8.2.2,
+OVMF; the WSL user is root. `.wslconfig` raised to 10 GB / 6 CPUs. Work from the WSL clone `/root/torch-os`,
+never the `/mnt/c` checkout (symlinks). No `udmabuf` → `RENDER=virgl`. Details: `docs/handoff.md` section 3.
+
+**Original machine:** Linux Mint 22.2, apt-based. Bare metal (not nested virtualization), Intel VT-x present, `/dev/kvm`
 exists with an ACL granting the owner direct rw access (no `kvm` group membership needed). No
 passwordless sudo — the owner installed `qemu-system-x86`/`qemu-utils`/`virt-manager`/`libvirtd`
 themselves at some point via a real terminal (not the `!`-relay, which can't supply a sudo password).

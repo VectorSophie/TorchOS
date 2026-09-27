@@ -1,38 +1,51 @@
-# TorchOS handoff (2026-09-27)
+# TorchOS handoff (2026-09-27, second session)
 
-For a fresh Claude Code session, on this Linux machine **or on Windows**. Read `CLAUDE.md` first (rules and
-locked decisions), then this file. Nothing has been pushed: `master` is ahead of `origin/master`.
+For a fresh Claude Code session, on the Linux machine **or on Windows (WSL2)**. Read `CLAUDE.md` first (rules and
+locked decisions), then this file. Nothing has been pushed: `master` is ahead of `origin/master`, and the
+package repository has not been published (section 4, item 1).
 
 ## 1. Where things stand
 
 The journey below was executed in QEMU/OVMF, on a freshly created blank virtual disk, with **no manual
 patching inside the guest** (driven by `image/scripts/dev/drive_install.py`):
 
-1. Build packages and a live ISO from the repo.
-2. Boot the ISO (UEFI). Autologin, Hyprland + Waybar + `torch-welcome`, Calamares maximized.
+1. Build packages, sign the repo, build a live ISO from the repo.
+2. Boot the ISO (UEFI). Autologin, Hyprland + Waybar + `torch-welcome`, Calamares maximized. `torch doctor`
+   in the live session: all OK, no failed units.
 3. Calamares erase-disk install: GPT, 512 MiB ESP, Btrfs with `@ @home @log @cache @snapshots`.
-4. Detach the ISO. The disk boots by itself: GRUB (with a *TorchOS snapshots* submenu and a fallback
-   kernel), login on tty1 starts Hyprland.
-5. `torch doctor` exits 0, every check OK, no failed units.
-6. `torch snapshot create` -> change a system file, install a package (`snap-pac` adds pre/post snapshots),
-   write a file in `/home` -> `torch snapshot rollback N` -> reboot -> the system change and the package
-   are gone, the `/home` file is kept, snapshots are intact.
+4. Detach the ISO. The disk boots by itself: GRUB defaults to the `linux` kernel (LTS under Advanced options),
+   greetd/tuigreet asks for the login, Hyprland starts.
+5. `torch doctor` exits 0, every check OK (incl. login manager and the `[torchos]` repo), no failed units.
+6. `torch update` upgrades through `torchd` against the **signed** `[torchos]` repo (served locally for the test).
+7. `torch kernel add linux-cachyos` -> confirmation -> checkpoint -> CachyOS repo + key -> kernel -> GRUB regenerated;
+   the CachyOS kernel boots (7.2.7-1-cachyos) and doctor stays green.
+8. GRUB *TorchOS snapshots* -> a pre-change snapshot boots on a temporary overlay; writes work and are gone after
+   the next normal boot. `torch doctor` says which snapshot is booted and how to keep it.
+9. `torch install`: repo package, AUR (`--aur`, PKGBUILD review, base-devel pulled in on demand), AppImage (fuse2 on
+   demand), Distrobox (Debian container, CLI exported to `~/.local/bin`).
+10. `torch snapshot create` -> change -> `torch snapshot rollback N` -> reboot -> change gone, `/home` kept.
 
 | area | status |
 |---|---|
 | `torchd` broker, `torch` CLI, hardened unit | VERIFIED |
-| package manifests + validator; split PKGBUILD; AUR recipes (`wlogout`, `calamares`) | VERIFIED |
-| live ISO boots (UEFI/OVMF) and renders | VERIFIED |
+| confirmation tokens: single use, bound to op + args + uid, 5 min TTL | VERIFIED (unit tests + live socket probe) |
+| package manifests + validator; split PKGBUILD (7 packages incl. `torchos-keyring`); AUR recipes | VERIFIED |
+| signed package repo (`sign-repo.sh`), ISO build requires valid signatures | VERIFIED |
+| live ISO boots (UEFI/OVMF), renders, doctor green (systemd-loop@sr0 masked) | VERIFIED |
 | Calamares blank-disk erase install (btrfs, GRUB) | VERIFIED |
-| installed system boots unattended, desktop, `doctor` green | VERIFIED |
+| installed system: greetd login, GRUB default `linux`, doctor green | VERIFIED |
+| `torch update` (full upgrade) against the signed `[torchos]` repo | VERIFIED (repo served from the dev host) |
+| `torch kernel add linux-cachyos` (CachyOS layer) + booting it | VERIFIED |
+| GRUB snapshot submenu: boot a read-only snapshot (overlay) | VERIFIED |
+| `torch install`: pacman / AUR / AppImage / Distrobox | VERIFIED |
+| `torch install`: Flathub | name resolution VERIFIED; a real Flatpak install not exercised (runtime download size) |
+| `torch install`: `.exe/.msi` via Wine, `.rpm` via Fedora box | written, not exercised |
 | checkpoint + change + rollback across a reboot | VERIFIED |
-| GRUB "TorchOS snapshots" submenu **content** (booting a read-only snapshot) | entry exists; **not booted** |
-| booting the `linux-lts` fallback explicitly | the installed default already boots lts; the `linux` entry not separately booted |
+| hosted repo on GitHub Releases | scripts ready, **not published** (needs the owner's go) |
 | BIOS/legacy boot, LUKS, manual partitioning, dual boot, Secure Boot | **not tested / unsupported** |
 | real hardware (any) | **not tested** |
-| release-candidate artifacts (final checksum, install guide review) | partial: see section 5 |
 
-## 2. Resume on Linux (the only place the VM tests run)
+## 2. Resume on Linux
 
 Needs: Docker (user in `docker` group), QEMU + KVM, OVMF (`/usr/share/OVMF`), ImageMagick `convert`, ~15 GB disk,
 ~4 GB free RAM for the VM.
@@ -40,6 +53,7 @@ Needs: Docker (user in `docker` group), QEMU + KVM, OVMF (`/usr/share/OVMF`), Im
 ```bash
 scripts/check-manifests.sh                       # every package name resolves in Arch repos (or is in aur.txt)
 image/scripts/build-packages.sh                  # -> image/repo/  (pacman repo: torchos.db + packages)
+image/scripts/sign-repo.sh                       # sign packages + db with ~/.torchos-signing (see section 6)
 image/scripts/build-iso.sh                       # -> image/out/torchos-*.iso + .sha256
 image/scripts/run-qemu.sh iso                    # boots ISO on a fresh blank disk (image/vm/torchos-test-blank-01.qcow2)
 image/scripts/run-qemu.sh disk                   # boots the installed disk, no ISO
@@ -58,73 +72,63 @@ TORCH_TEST_PW=<throwaway> VM_USER=liveuser image/scripts/dev/drive_install.py   
 
 Read `image/scripts/dev/README.md` before touching the harness: it records the traps that cost hours.
 
-## 3. Resume on Windows (border)
+## 3. Resume on Windows: WSL2 runs the whole loop
 
-A Windows session **cannot** run the acceleration this project's VM tests need: there is no KVM, and the
-scripts are bash. Split the work like this.
+The earlier assumption ("no KVM on Windows") was wrong for this machine: WSL2 exposes **nested KVM** (`/dev/kvm`),
+and Docker runs natively inside WSL. Everything in section 2 runs there, including the Calamares install (~18 min)
+and reboots. This session's full verification was done this way.
 
-**Do on Windows, inside WSL2 (Ubuntu), with the repo cloned into the WSL filesystem (`~/`, not `/mnt/c`):**
-- Rust work: `torch/` (`cargo test -p torch -p torchd`; the GTK crate needs `libgtk-4-dev`).
-- Package manifests, PKGBUILD, docs, dotfiles, Calamares config, `packages/`.
-- `scripts/check-manifests.sh`, `image/scripts/build-packages.sh`, `image/scripts/build-iso.sh` via
-  **Docker Desktop with the WSL2 backend** (the ISO build needs `--privileged`, which Docker Desktop allows).
-  Expect a 3 GB ISO and ~15 GB scratch; the first build downloads a lot.
-- Code review, planning, the open work in section 4 that says "no VM needed".
+Setup that exists on the owner's machine:
+- `C:\Users\PC\.wslconfig`: `memory=10GB`, `processors=6` (was 4GB/3; the ISO build + a 3.5 GB VM do not fit in 4).
+- The repo cloned **inside WSL** at `/root/torch-os` (remote `win` = the Windows checkout, `origin` = GitHub). Do not
+  build from `/mnt/c`: a native Windows checkout loses the 10 committed symlinks (`core.symlinks=false`) and
+  the ISO silently loses those services. Check with `git ls-files -s | awk '$1==120000'`.
+- The WSL user is root, so no sudo prompts; the trust-boundary rules in CLAUDE.md still apply to the guest.
 
-**Do NOT do on Windows:** the boot/install/rollback verification. QEMU for Windows can run this guest only
-with `-accel tcg` (no KVM, ~10-50x slower) or WHPX (untested here); a Calamares install would take hours and
-GPU/`blob` rendering will not work. Do those on a Linux/KVM host (this machine, or a Linux VM with nested
-virtualization). A Windows session should hand ISO artifacts to a Linux run rather than try to test them.
-
-**Hazards specific to a Windows checkout** (a native Windows `git clone` will break the build):
-- The ISO profile relies on **9 committed symlinks** (systemd unit enablement under
-  `image/archiso/airootfs/etc/systemd/system/...`, including `systemd-firstboot.service -> /dev/null`).
-  Without symlink support they become text files and the ISO silently loses those services. Use WSL2, or
-  `git config core.symlinks true` plus Developer Mode. Check with `git ls-files -s | awk '$1==120000'`.
-- Shell scripts, `PKGBUILD` and unit files must stay **LF**; `.gitattributes` enforces it. If you see `\r` in
-  a script, the checkout is wrong.
-- Path separators and `image/vm/*.sock` (Unix sockets) do not exist on native Windows.
-- `docker` from WSL2 needs Docker Desktop's WSL integration enabled for that distro.
+**Differences from the Linux host:**
+- WSL's kernel has no `udmabuf`, so `RENDER=blob` does not work. Use **`RENDER=virgl`**: virgl 3D through WSLg's GL,
+  `-display gtk,gl=on` (a QEMU window opens on the Windows desktop) plus VNC on :1 for scripted input. Hyprland
+  renders (GL ES 3.2 on virgl/llvmpipe); `grim` inside the guest works. Plain std VGA does **not** work (no render node).
+- The monitor's `screendump` fails with a GL display; use `image/scripts/dev/vnc.py shot out.png`.
+- Background processes started from a `wsl.exe` call die when that call returns; keep long jobs (builds, QEMU) in one
+  foreground `wsl.exe` invocation (Claude Code: `run_in_background`).
+- Editing files under `\\wsl.localhost\...` from Windows tools drops the executable bit. `git diff --summary` shows it;
+  `chmod +x` before building.
+- Boots are slower (nested virt + software GL): ~1m45s to `graphical.target`, first boot after a kernel install longer.
 
 ## 4. Open work, by priority
 
-1. *(done 2026-09-27)* The packaged `torchd` unit (CAP_SYS_PTRACE added, PrivateDevices removed) was
-   re-verified from a clean blank-disk install with no drop-ins: `torch update`, snap-pac snapshots,
-   `torch snapshot rollback`, reboot, `/home` preserved.
-2. **Boot a snapshot from the GRUB submenu** *(Linux/KVM)*: pick *TorchOS snapshots*, boot a read-only snapshot,
-   note what happens to writes (grub-btrfs overlay). Update `docs/recovery.md` with the observed result.
-3. **Hosted package repo** *(no VM needed)*. Installed systems only know Arch's repos; `torch-*` packages are in a
-   build-time-only local repo, so they cannot update. Decide hosting, sign packages, add the repo to the
-   installed `pacman.conf`.
-4. **CachyOS layer** *(needs VM to verify)*: repo + keyring + kernel opt-in; `docs/decisions/0001`.
-5. **Login**: tty1 autologin-to-Hyprland via `/etc/profile.d` works; a display manager (greetd) is the proper
-   answer for multi-user and password-locked sessions.
-6. **`hyprpaper` wallpaper** does not render in the VM (DRM/GBM permission, see CLAUDE.md gotchas); unknown on real hardware.
-7. **Live session**: `systemd-loop@sr0.service` fails on the ISO (cosmetic but makes `doctor` red in the live
-   session); the live `torch-welcome` failed-services line is unwrapped/truncated; the installer window rule is
-   done by script (`calamares-launch`), not a Hyprland window rule.
-8. **`torch update`** always does a full upgrade (`pacman -Syu`); a plain "install one package without upgrading" is
-   deliberately not offered (Arch does not support partial upgrades). Failure right after boot can be the network
-   not being up yet; the CLI should say so.
-9. **Confirmation tokens**: `torchd` accepts any non-empty token (marked `ponytail:`); validate issued tokens
-   before any non-interactive client (Phase 3 AI) exists.
-10. **Not built yet**: LUKS test, BIOS install, dual boot, Secure Boot, GPU-specific driver selection at install time,
-    suspend/resume, `torch kernel/scheduler/hardware` commands, Flatpak/AppImage/Distrobox resolver (Phase 4).
-11. **Reproducibility**: builds are *repeatable*, not bit-for-bit. Pin package versions / snapshot the Arch repo
-    (e.g. the Arch Linux Archive) to go further.
-12. **AI (Phase 3)**: intentionally not started; out of scope until the base is on real hardware.
+1. **Publish the package repo** *(owner decision; outward-facing)*. `image/scripts/publish-repo.sh` uploads the signed
+   repo to the rolling GitHub release `repo`; installed systems already point at
+   `https://github.com/VectorSophie/TorchOS/releases/download/repo`. **Until it is published, `torch update` on an
+   installed system fails** at "failed to retrieve some files" for `torchos`. Back up `~/.torchos-signing` (the private
+   signing key, WSL only) before anything else happens to that machine.
+2. **Release ISO**: rebuild without `DEV_SSH_PUBKEY` from the final tree, smoke-test live boot, record the checksum
+   (section 5).
+3. **Real hardware** (Phase 6): nothing has run outside QEMU. Intel iGPU first (i915 default), then suspend/resume.
+4. **Flatpak and Wine paths of `torch install`**: exercise a real Flathub install and an `.exe` on a machine with the
+   bandwidth for the runtimes.
+5. **`hyprpaper` wallpaper** does not render in the VM (DRM/GBM permission, see CLAUDE.md gotchas); unknown on real hardware.
+6. **VM resolution**: under virgl the guest picks 640x480 despite `xres/yres`; set a Hyprland `monitor=` rule for
+   Virtual-1 if screenshots need more room (VM-only cosmetic).
+7. **AUR dependencies**: `torch install --aur` installs repo dependencies but refuses AUR-only ones (each must be
+   reviewed and installed first). A dependency named only by a `provides=` alias is also treated as AUR-only.
+8. **Not built yet**: LUKS, BIOS install, dual boot, Secure Boot (sbctl), GPU-specific driver selection at install
+   time, `torch kernel remove`, Calamares window rule (still done by `calamares-launch`).
+9. **Reproducibility**: builds are *repeatable*, not bit-for-bit. Pin package versions / snapshot the Arch repo
+   (e.g. the Arch Linux Archive) to go further.
+10. **AI (Phase 3)**: intentionally not started. Token validation (a prerequisite for a non-interactive client) is done.
 
 ## 5. Release-candidate checklist (not complete)
 
 - [x] one documented command sequence builds the ISO (`docs/build.md`)
 - [x] no reusable plaintext credential committed (`image/vm/user_credentials.json` untracked; old value remains in
-      git history: rewrite only with the owner's say-so)
+      git history: rewrite only with the owner's say-so). The signing key's private half is not in the repo.
 - [x] VM disks and ISOs ignored by Git
-- [x] release ISO built **without** `DEV_SSH_PUBKEY`, live boot smoke-tested (UEFI/OVMF: autologin -> Hyprland ->
-      Calamares welcome). Local artifact `image/out/torchos-2026.09.26-x86_64.iso`, 3236495360 bytes,
-      SHA-256 `b0433f052348f65338c2a386c5a7595a9094487e967dba2dfea1096ae9e30dd9`. Not bit-for-bit reproducible
-      (section 4, item 11): a rebuild will differ. The full install/rollback run used the equivalent *dev* ISO.
 - [x] `docs/known-issues.md` reconciled with section 1 above
+- [ ] package repo published (section 4, item 1)
+- [ ] release ISO rebuilt from the final tree without `DEV_SSH_PUBKEY`, smoke-tested, checksum recorded
+      (the 2026-09-26 release ISO predates this session's fixes)
 - [ ] install and recovery guides walked through by someone who did not write them
 
 ## 6. Supported / unsupported (today)
@@ -135,11 +139,15 @@ non-English installs (Korean input packages are in the manifest but not exercise
 
 ## 7. Things that are NOT in the repo (recreate them)
 
+- `~/.torchos-signing` (in WSL): GnuPG home with the **repo signing key** (ed25519, fingerprint
+  `FD561EDBA8080AA625A935E075870B90E4C34AC8`, no passphrase). Its public half is `pkg/torchos/keyring/torchos.gpg`.
+  Losing it means generating a new key, shipping a new `torchos-keyring`, and re-signing everything.
 - `~/.ssh/torchos_vm` (dev SSH key) and `image/vm/.testpw` (throwaway test password): both local, both ignored.
 - The ISO, package repo, VM disks: build/create them (`image/out`, `image/repo`, `image/vm` are gitignored).
-- Session scratchpads. Anything worth keeping was moved to `image/scripts/dev/`.
+  `image/vm/fresh-install.qcow2` (+ `.vars`) is a saved just-installed disk for quick re-tests.
 
 ## 8. Decision records
 
-`docs/decisions/`: `0001-base-and-composition.md`, `btrfs-layout.md` (incl. the rollback mechanism),
-`bootloader.md`. Specs and plans: `docs/superpowers/`. The torchd plan has a STATUS block listing every deviation.
+`docs/decisions/`: `0001-base-and-composition.md` (incl. the CachyOS kernel layer), `btrfs-layout.md` (incl. the
+rollback mechanism), `bootloader.md`. Specs and plans: `docs/superpowers/`. The torchd plan has a STATUS block
+listing every deviation.

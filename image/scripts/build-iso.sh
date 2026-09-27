@@ -26,19 +26,19 @@ fi
 # Package list = manifests (live+base+desktop+hardware) + TorchOS packages + reviewed AUR recipes.
 {
   for f in live base desktop hardware; do sed 's/#.*//' packages/$f.txt; done
-  echo torch-cli torch-welcome torch-config torch-branding torch-release torch-installer-config
+  echo torch-cli torch-welcome torch-config torch-branding torch-release torch-installer-config torchos-keyring
   sed 's/#.*//' packages/aur.txt
   echo qemu-guest-agent spice-vdagent terminus-font
 } | tr -s ' \n' '\n' | grep -v '^$' | sort -u > "$P/packages.x86_64"
 
-# Build-time pacman.conf: official repos + our local repo (unsigned, build-only; not shipped).
+# Build-time pacman.conf: official repos + our local repo (signed by sign-repo.sh; its key is trusted below).
+cp pkg/torchos/keyring/torchos.gpg "$P/torchos.gpg"
 # The container image ships NoExtract rules (locales, man pages, docs, even etc/pacman.conf); an ISO built
 # with them would be missing all of that. Strip them.
 docker run --rm archlinux:base-devel cat /etc/pacman.conf | sed "/^NoExtract/d" > "$P/pacman.conf"
 cat >> "$P/pacman.conf" <<'CONF'
 
 [torchos]
-SigLevel = Optional TrustAll
 Server = file:///repo
 CONF
 
@@ -48,6 +48,8 @@ docker run --rm --privileged \
   archlinux:base-devel bash -euxc '
     trap "chown -R \$HOST_UID /out /profile /work" EXIT
     pacman -Syu --noconfirm archiso >/dev/null
+    pacman-key --init && pacman-key --add /profile/torchos.gpg
+    pacman-key --lsign-key "$(gpg --show-keys --with-colons /profile/torchos.gpg | awk -F: "/^fpr/{print \$10; exit}")"
     R=/usr/share/archiso/configs/releng
     # Reuse releng boot menus, rebranded.
     cp -a $R/efiboot $R/syslinux /profile/

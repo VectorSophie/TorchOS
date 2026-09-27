@@ -8,7 +8,7 @@ OUT=$ROOT/image/repo
 WORK=$ROOT/image/build/pkgwork
 mkdir -p "$OUT" "$WORK"
 rm -rf "$WORK/torchos" && mkdir -p "$WORK/torchos"
-cp pkg/torchos/{PKGBUILD,torchd.sysusers,os-release,torchos-os-release.hook,torchos-hyprland.sh} "$WORK/torchos/"
+cp pkg/torchos/{PKGBUILD,torchd.sysusers,os-release,torchos-os-release.hook,torchos-keyring.install} pkg/torchos/keyring/* "$WORK/torchos/"
 # Working-tree source snapshot (no target/, no VM images).
 tar --exclude=target -czf "$WORK/torchos/torchos-src.tar.gz" \
   --transform 's,^,src/,' torch dotfiles image/calamares assets/branding/logo-badge.png assets/branding/icons assets/branding/wallpaper.png assets/branding/wallpaper-light.png

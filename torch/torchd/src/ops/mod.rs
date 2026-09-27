@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 
+pub mod kernel;
 pub mod package;
 pub mod service;
 pub mod snapshot;
@@ -17,6 +18,28 @@ pub fn check_name(name: &str) -> Result<()> {
         bail!("invalid name: {name:?}");
     }
     Ok(())
+}
+
+/// What a confirmation prompt shows the human: the concrete action, not just the op name.
+pub fn describe(op: &str, args: &serde_json::Value) -> String {
+    let s = |k: &str| args[k].as_str().unwrap_or("?").to_string();
+    match op {
+        "snapshot.rollback" => format!(
+            "Roll the system back to snapshot {}? /home is kept; the current system is kept as @.pre-rollback-*. Takes effect on reboot.",
+            s("snapshot_id")
+        ),
+        "service.restart" => format!("Restart the service {}?", s("name")),
+        "package.remove" => format!("Remove packages: {}?", args["names"]),
+        "package.install_file" => format!(
+            "Install the local package file {} as root? Its install scripts run with full privileges.",
+            s("path")
+        ),
+        "kernel.install" => format!(
+            "Install the {} kernel? A checkpoint is taken first and GRUB is regenerated; the current kernels stay.",
+            s("name")
+        ),
+        other => format!("{other} requires confirmation"),
+    }
 }
 
 #[cfg(test)]

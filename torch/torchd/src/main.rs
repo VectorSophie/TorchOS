@@ -7,6 +7,7 @@ mod audit;
 mod ops;
 mod policy;
 mod protocol;
+mod tokens;
 
 use audit::AuditEvent;
 use policy::{decide, Decision, Tier};
@@ -37,9 +38,11 @@ fn main() -> Result<()> {
     }
 
     println!("torchd listening on {SOCKET_PATH}");
+    // ponytail: one client at a time; ops are long (pacman) and must not interleave anyway.
+    let mut tokens = tokens::Tokens::default();
     for stream in listener.incoming() {
         let stream = stream.context("accept failed")?;
-        if let Err(e) = handle_client(stream) {
+        if let Err(e) = handle_client(stream, &mut tokens) {
             eprintln!("client error: {e:#}");
         }
     }
@@ -92,7 +95,7 @@ fn peer_identity(stream: &UnixStream) -> Result<(u32, u32)> {
     Ok((cred.uid, cred.gid))
 }
 
-fn handle_client(stream: UnixStream) -> Result<()> {
+fn handle_client(stream: UnixStream, tokens: &mut tokens::Tokens) -> Result<()> {
     let (peer_uid, _peer_gid) = match peer_identity(&stream) {
         Ok(id) => id,
         Err(e) => {
@@ -128,18 +131,17 @@ fn handle_client(stream: UnixStream) -> Result<()> {
 
     // torch CLI is the only Phase 2 client and always runs as Auto.
     let tier = Tier::Auto;
-    // ponytail: any non-empty confirm_token counts as confirmation; the issued
-    // token is not tracked. Fine while the only client is the local CLI prompting
-    // a human; validate issued tokens before any non-interactive client exists.
-    let has_confirmation = req.confirm_token.as_deref().is_some_and(|t| !t.is_empty());
+    // A confirmation counts only if it redeems a token issued to this uid for this exact op + args.
+    let has_confirmation =
+        req.confirm_token.as_deref().is_some_and(|t| tokens.redeem(t, &req.op, &req.args, peer_uid));
     let decision = decide(&req.op, tier, has_confirmation);
 
     let response = match &decision {
         Decision::Denied(reason) => Response::denied(&req.request_id, reason.clone()),
         Decision::NeedsConfirmation => Response::needs_confirmation(
             &req.request_id,
-            format!("{} requires confirmation — resend with confirm_token set", req.op),
-            uuid::Uuid::new_v4().to_string(),
+            ops::describe(&req.op, &req.args),
+            tokens.issue(&req.op, &req.args, peer_uid),
         ),
         Decision::AutoApprove => match run_op(&req.op, &req.args) {
             Ok(msg) => Response::ok(&req.request_id, msg, None),
@@ -184,6 +186,9 @@ fn run_op(op: &str, args: &serde_json::Value) -> Result<String> {
         "snapshot.rollback" => ops::snapshot::rollback(args),
         "package.install" => ops::package::install(args),
         "package.remove" => ops::package::remove(args),
+        "package.install_file" => ops::package::install_file(args),
+        "system.upgrade" => ops::package::upgrade(),
+        "kernel.install" => ops::kernel::install(args),
         "service.restart" => ops::service::restart(args),
         other => anyhow::bail!("unknown operation: {other}"),
     }

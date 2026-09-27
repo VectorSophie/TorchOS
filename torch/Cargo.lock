@@ -830,7 +830,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "torch"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "torch-welcome"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "gtk4",
@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "torchd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",

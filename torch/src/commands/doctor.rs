@@ -73,6 +73,17 @@ pub fn supported() -> bool {
     Path::new("/run/systemd/system").exists()
 }
 
+/// Snapshot number when booted from a grub-btrfs entry (`rootflags=...subvol=@snapshots/N/snapshot`).
+pub fn snapshot_boot(cmdline: &str) -> Option<u32> {
+    let rest = cmdline.split("subvol=@snapshots/").nth(1)?;
+    rest.split('/').next()?.parse().ok()
+}
+
+/// The archiso live environment: install-only checks (snapshots, boot menu, login) do not apply.
+pub fn live_session() -> bool {
+    Path::new("/run/archiso").exists()
+}
+
 pub fn collect() -> Vec<Check> {
     let mut c = Vec::new();
 
@@ -82,6 +93,23 @@ pub fn collect() -> Vec<Check> {
     } else {
         check("os-release", Level::Warn, format!("ID={id:?}, not a TorchOS install"))
     });
+
+    if live_session() {
+        c.push(check("session", Level::Ok, "live ISO: install-only checks skipped"));
+        c.extend(common_checks(&[]));
+        return c;
+    }
+    if let Some(n) = snapshot_boot(&std::fs::read_to_string("/proc/cmdline").unwrap_or_default()) {
+        // Booted from GRUB's "TorchOS snapshots" menu: the root is a temporary overlay on the snapshot.
+        c.push(check(
+            "session",
+            Level::Warn,
+            format!("booted snapshot {n}: changes vanish at reboot. Keep this state: torch snapshot rollback {n}"),
+        ));
+        // fstab's btrfs remount options cannot apply to the overlay root; expected, not a fault.
+        c.extend(common_checks(&["systemd-remount-fs.service"]));
+        return c;
+    }
 
     let fstype = out("findmnt", &["-no", "FSTYPE", "/"]).unwrap_or_default();
     c.push(if fstype == "btrfs" {
@@ -109,6 +137,25 @@ pub fn collect() -> Vec<Check> {
         check("fallback kernel", Level::Warn, format!("only {kernels:?} installed"))
     });
 
+    c.push(if unit_enabled("greetd.service") {
+        check("login", Level::Ok, "greetd enabled")
+    } else {
+        check("login", Level::Warn, "greetd.service not enabled: no graphical login")
+    });
+
+    let pacman_conf = std::fs::read_to_string("/etc/pacman.conf").unwrap_or_default();
+    c.push(if pacman_conf.lines().any(|l| l.trim() == "[torchos]") {
+        check("package repo", Level::Ok, "[torchos] configured")
+    } else {
+        check("package repo", Level::Warn, "[torchos] missing from pacman.conf: torch-* packages will not update")
+    });
+
+    c.extend(common_checks(&[]));
+    c
+}
+
+fn common_checks(expected_failures: &[&str]) -> Vec<Check> {
+    let mut c = Vec::new();
     c.push(if unit_active("NetworkManager") {
         check("network", Level::Ok, "NetworkManager active")
     } else {
@@ -121,7 +168,8 @@ pub fn collect() -> Vec<Check> {
         check("torchd", Level::Warn, "not active: torch update/snapshot/service will not work")
     });
 
-    let failed = parse_failed_units(&out("systemctl", &["list-units", "--failed", "--no-legend", "--plain"]).unwrap_or_default());
+    let mut failed = parse_failed_units(&out("systemctl", &["list-units", "--failed", "--no-legend", "--plain"]).unwrap_or_default());
+    failed.retain(|u| !expected_failures.contains(&u.as_str()));
     c.push(if failed.is_empty() {
         check("systemd units", Level::Ok, "none failed")
     } else {
@@ -174,6 +222,13 @@ mod tests {
         let t = "● foo.service loaded failed failed Foo\n  bar.mount loaded failed failed Bar\n";
         assert_eq!(parse_failed_units(t), ["foo.service", "bar.mount"]);
         assert!(parse_failed_units("").is_empty());
+    }
+
+    #[test]
+    fn snapshot_boot_from_cmdline() {
+        let c = "BOOT_IMAGE=/@snapshots/6/snapshot/boot/vmlinuz-linux root=UUID=x rootflags=defaults,noatime,subvol=@snapshots/6/snapshot";
+        assert_eq!(snapshot_boot(c), Some(6));
+        assert_eq!(snapshot_boot("root=UUID=x rw rootflags=subvol=@"), None);
     }
 
     #[test]

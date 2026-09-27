@@ -1,0 +1,7 @@
+# Same pattern as archlinux-keyring: (re)import on install/upgrade once pacman-key has been initialised.
+post_upgrade() {
+  if usr/bin/pacman-key -l >/dev/null 2>&1; then
+    usr/bin/pacman-key --populate torchos
+  fi
+}
+post_install() { post_upgrade; }

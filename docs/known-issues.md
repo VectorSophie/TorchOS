@@ -6,24 +6,29 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 | area | status |
 |---|---|
 | `torchd` + `torch` CLI (snapshot/update/service/rollback via socket, systemd unit) | VERIFIED |
-| `torch doctor/diagnose/gpu` typed output + exit codes | VERIFIED (host, unit tests, installed VM: exit 0) |
+| confirmation tokens (single use, bound to op + args + caller, 5 min) | VERIFIED |
+| `torch doctor/diagnose/gpu/hardware` typed output + exit codes | VERIFIED (host, unit tests, installed VM: exit 0) |
 | package manifests resolve against Arch repos | VERIFIED |
-| TorchOS packages + wlogout + calamares build in an Arch container | VERIFIED |
-| live ISO builds, boots (UEFI/OVMF), renders Hyprland + installer | VERIFIED |
+| TorchOS packages + wlogout + calamares build in an Arch container; repo signed | VERIFIED |
+| live ISO builds, boots (UEFI/OVMF), renders Hyprland + installer; live doctor green | VERIFIED |
 | Calamares erase-disk Btrfs install on a blank disk, no manual patching | VERIFIED |
-| installed system boots without the ISO; desktop; `doctor` all OK | VERIFIED |
+| installed system boots without the ISO; greetd login; desktop; `doctor` all OK | VERIFIED |
+| GRUB defaults to `linux`; `linux-lts` under Advanced options | VERIFIED |
 | checkpoint -> change -> `torch snapshot rollback` -> reboot; `/home` kept | VERIFIED |
 | pacman transactions through `torchd` get automatic pre/post snapshots (snap-pac) | VERIFIED |
-| packaged `torchd.service` (CAP_SYS_PTRACE, no PrivateDevices) from a clean install, full update + rollback + reboot | VERIFIED (no drop-ins) |
-| booting a snapshot from the GRUB "TorchOS snapshots" submenu | UNVERIFIED (entry exists) |
-| CachyOS kernel/repo | not included (decision 0001) |
+| `torch update` (full upgrade) against the signed `[torchos]` repo | VERIFIED (repo served locally; not yet hosted) |
+| booting a snapshot from the GRUB "TorchOS snapshots" submenu (temporary overlay) | VERIFIED |
+| `torch kernel add linux-cachyos` + booting the CachyOS kernel | VERIFIED |
+| `torch install`: repo, AUR (`--aur`), AppImage, Distrobox | VERIFIED |
+| `torch install`: Flathub | name resolution VERIFIED, install UNVERIFIED |
+| `torch install`: `.exe`/`.msi` (Wine), `.rpm` (Fedora box) | UNVERIFIED |
 | BIOS install, LUKS, manual partitioning, dual boot, Secure Boot | unsupported / untested |
 | real hardware, NVIDIA, suspend/resume | untested |
-| hosted package repo (installed systems cannot update `torch-*`) | not built |
+| hosted package repo | scripts ready, not published: **`torch update` fails on installed systems until it is** |
 
 ## Known defects (not fixed)
-- Live session: `systemd-loop@sr0.service` fails (cosmetic; `doctor` reports the live session degraded).
-- `torch-welcome` does not wrap a long failed-services line.
 - `hyprpaper` wallpaper does not render in the VM (DRM/GBM), see CLAUDE.md gotchas.
-- `torch update` right after boot can fail if the network is not up yet.
-- GRUB boots `linux-lts` by default (it sorts as newest); the regular `linux` kernel is under Advanced options.
+- Booted snapshot: `systemd-remount-fs.service` fails (fstab's btrfs options cannot apply to the overlay root).
+  Harmless; `torch doctor` expects it and explains the snapshot boot instead.
+- `torch install --aur` does not build AUR-only dependencies; install each one first (each gets its own review).
+- Under virgl (WSL2 dev loop) the guest display comes up at 640x480.

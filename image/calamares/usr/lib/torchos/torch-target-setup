@@ -10,7 +10,7 @@ rm -f /usr/lib/sysusers.d/torch-live.conf /etc/sudoers.d/99-torch-live \
       /etc/systemd/system/getty@tty1.service.d/autologin.conf \
       /etc/systemd/system/multi-user.target.wants/torch-live-setup.service \
       /etc/systemd/system/torch-live-setup.service \
-      /usr/local/bin/torch-live-setup /usr/local/bin/calamares-launch \
+      /usr/local/bin/torch-live-setup /usr/local/bin/calamares-launch /etc/profile.d/torchos-hyprland.sh \
       /etc/mkinitcpio.conf.d/archiso.conf /etc/hostname.live
 rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
 rm -rf /home/liveuser
@@ -21,6 +21,8 @@ rm -f /etc/systemd/system/pacman-init.service /etc/systemd/system/etc-pacman.d-g
 # The live image masks firstboot (no interactive prompt); the installed system does not need it either
 # (Calamares sets locale/timezone/machine-id), but leave it unmasked so it is not silently disabled.
 rm -f /etc/systemd/system/systemd-firstboot.service
+# Live-only mask (systemd#43605: systemd-loop@sr0 fails on archiso optical boots); installed systems keep it.
+rm -f /etc/systemd/system/systemd-loop@.service
 
 ## 2. Normal initramfs (the live one boots through archiso hooks) for every installed kernel.
 for d in /usr/lib/modules/*/; do
@@ -40,15 +42,41 @@ fallback_image="/boot/initramfs-$base-fallback.img"
 fallback_options="-S autodetect"
 PRESET
 done
-mkinitcpio -P || echo "WARN: mkinitcpio -P failed"
+# busybox init + grub-btrfs-overlayfs: booting a read-only snapshot from the GRUB menu gets a
+# writable overlay (changes vanish on reboot) instead of a half-working read-only root. The hook is a
+# runtime busybox hook; Arch's default systemd-based initramfs never runs it.
+echo 'HOOKS=(base udev autodetect microcode modconf kms keyboard keymap block filesystems fsck grub-btrfs-overlayfs)' \
+  > /etc/mkinitcpio.conf.d/torchos.conf
+# The installer and live-ISO tooling have no job on an installed system. Removing mkinitcpio-archiso
+# fires pacman's mkinitcpio hook, which builds every preset above: that *is* the initramfs build
+# (a separate `mkinitcpio -P` doubled install time by ~3 min). This script belongs to
+# torch-installer-config; bash already has it open, so removing it mid-run is safe.
+if ! pacman -Rns --noconfirm calamares torch-installer-config archiso mkinitcpio-archiso; then
+  echo "WARN: could not remove installer packages"
+  mkinitcpio -P || echo "WARN: mkinitcpio -P failed"
+fi
 
-## 3. Keyring, zram, services.
+## 3. Keyring + TorchOS package repo, zram, login, services.
 pacman-key --init && pacman-key --populate archlinux
+pacman-key --populate torchos || echo "WARN: torchos keyring missing: torch-* updates will fail signature checks"
+# Hosted, signed repo so torch-* packages update like everything else (image/scripts/publish-repo.sh).
+grep -q '^\[torchos\]' /etc/pacman.conf ||
+  printf '\n[torchos]\nServer = https://github.com/VectorSophie/TorchOS/releases/download/repo\n' >> /etc/pacman.conf
+# Login: greetd + tuigreet (text greeter, remembers the last user/session) instead of tty autologin.
+mkdir -p /etc/greetd
+cat > /etc/greetd/config.toml <<'GREETD'
+[terminal]
+vt = 1
+
+[default_session]
+command = "tuigreet --time --remember --remember-user-session --asterisks --greeting 'Welcome to TorchOS' --cmd start-hyprland"
+user = "greeter"
+GREETD
 mkdir -p /etc/systemd
 printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
 for u in NetworkManager.service bluetooth.service torchd.service power-profiles-daemon.service \
          systemd-timesyncd.service fstrim.timer cups.socket \
-         snapper-timeline.timer snapper-cleanup.timer grub-btrfsd.service; do
+         snapper-timeline.timer snapper-cleanup.timer grub-btrfsd.service greetd.service; do
   systemctl enable "$u" || echo "WARN: could not enable $u"
 done
 

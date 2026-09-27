@@ -19,10 +19,11 @@ LogsDirectoryMode=0750
 #   ProtectSystem=, RestrictNamespaces=, MemoryDenyWriteExecute= : break pacman transactions
 #   PrivateDevices=   : hides /dev/vdaN, so the rollback cannot mount the top-level Btrfs
 #   CAP_SYS_PTRACE    : snap-pac's hook stats /proc/1/root and dies with EACCES without it
+#   ProtectKernelModules= : makes /usr/lib/modules read-only, so every kernel install *or upgrade*
+#                       fails ("Partition /usr/lib/modules is mounted read only")
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectKernelTunables=true
-ProtectKernelModules=true
 ProtectControlGroups=true
 LockPersonality=true
 RestrictRealtime=true

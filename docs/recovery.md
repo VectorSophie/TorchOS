@@ -10,8 +10,11 @@
    *Verified across a real reboot:* a system file and an installed package reverted, a file in `/home` remained.
 4. **Undo a rollback / reclaim space:** the previous root is kept as `@.pre-rollback-*` on the top-level
    filesystem. Delete it once you are sure: mount `subvolid=5`, `btrfs subvolume delete @.pre-rollback-...`.
-5. **System will not boot:** in the GRUB menu, *Advanced options* offers the other kernel (`linux` and
-   `linux-lts`, plus fallback initramfs images); *TorchOS snapshots* lists snapshots to boot read-only.
-   *Not yet verified:* booting from the snapshots submenu.
+5. **System will not boot:** in the GRUB menu, *Advanced options* offers the other kernels (`linux-lts`, any
+   kernel added with `torch kernel add`, plus fallback initramfs images). *TorchOS snapshots* (last entry) lists
+   every snapshot; pick one, then a kernel. The snapshot boots on a **temporary overlay**: the desktop works and
+   you can write files, but every change vanishes at the next reboot. `torch doctor` says which snapshot you are
+   in. To keep that state, run `torch snapshot rollback <N>` from inside it and reboot.
+   *Verified:* a pre-change snapshot booted, the later change was absent, writes were gone after a normal reboot.
 
 Snapshots are **not backups**: they live on the same disk. Layout and rationale: `docs/decisions/btrfs-layout.md`.
