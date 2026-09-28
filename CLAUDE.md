@@ -133,8 +133,7 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
 
 Full handoff: **`docs/handoff.md`**. In one paragraph: blank disk → install → greetd login → signed-repo update →
 CachyOS kernel → snapshot boot → rollback all work in a VM, and the whole loop runs on the owner's Windows machine
-in WSL2 (`RENDER=virgl`). What remains: **publishing the package repo** (until then `torch update` fails on installed
-systems), a release ISO from the final tree, real hardware, LUKS/BIOS/dual boot, Secure Boot. Nothing is pushed
+in WSL2 (`RENDER=virgl`). What remains: a release ISO from the final tree, real hardware, LUKS/BIOS/dual boot, Secure Boot. Nothing is pushed
 (`master` is ahead of `origin/master`); commit history is the decision record. **Never commit** `image/vm/`,
 `image/out/`, `image/repo/`, `image/build/` (all gitignored), any credential, or the signing key (`~/.torchos-signing`).
 

@@ -16,7 +16,7 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 | GRUB defaults to `linux`; `linux-lts` under Advanced options | VERIFIED |
 | checkpoint -> change -> `torch snapshot rollback` -> reboot; `/home` kept | VERIFIED |
 | pacman transactions through `torchd` get automatic pre/post snapshots (snap-pac) | VERIFIED |
-| `torch update` (full upgrade) against the signed `[torchos]` repo | VERIFIED (repo served locally; not yet hosted) |
+| `torch update` (full upgrade) against the signed `[torchos]` repo | VERIFIED (repo served locally; hosted repo verified separately) |
 | booting a snapshot from the GRUB "TorchOS snapshots" submenu (temporary overlay) | VERIFIED |
 | `torch kernel add linux-cachyos` + booting the CachyOS kernel | VERIFIED |
 | `torch install`: repo, AUR (`--aur`), AppImage, Distrobox | VERIFIED |
@@ -24,7 +24,7 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 | `torch install`: `.exe`/`.msi` (Wine), `.rpm` (Fedora box) | UNVERIFIED |
 | BIOS install, LUKS, manual partitioning, dual boot, Secure Boot | unsupported / untested |
 | real hardware, NVIDIA, suspend/resume | untested |
-| hosted package repo | scripts ready, not published: **`torch update` fails on installed systems until it is** |
+| hosted package repo (GitHub release `repo`) | PUBLISHED, pacman sync + signature VERIFIED |
 
 ## Known defects (not fixed)
 - `hyprpaper` wallpaper does not render in the VM (DRM/GBM), see CLAUDE.md gotchas.

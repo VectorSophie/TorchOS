@@ -2,7 +2,7 @@
 
 For a fresh Claude Code session, on the Linux machine **or on Windows (WSL2)**. Read `CLAUDE.md` first (rules and
 locked decisions), then this file. Nothing has been pushed: `master` is ahead of `origin/master`, and the
-package repository has not been published (section 4, item 1).
+package repository **is published** (GitHub release `repo`, 2026-09-28).
 
 ## 1. Where things stand
 
@@ -45,7 +45,7 @@ packages gone, one clean "fresh install" snapshot, torchd unit without `ProtectK
 | `torch install`: Flathub | name resolution VERIFIED; a real Flatpak install not exercised (runtime download size) |
 | `torch install`: `.exe/.msi` via Wine, `.rpm` via Fedora box | written, not exercised |
 | checkpoint + change + rollback across a reboot | VERIFIED |
-| hosted repo on GitHub Releases | scripts ready, **not published** (needs the owner's go) |
+| hosted repo on GitHub Releases | PUBLISHED 2026-09-28; clean-container `pacman -Sy` + signed download VERIFIED |
 | BIOS/legacy boot, LUKS, manual partitioning, dual boot, Secure Boot | **not tested / unsupported** |
 | real hardware (any) | **not tested** |
 
@@ -102,11 +102,10 @@ Setup that exists on the owner's machine:
 
 ## 4. Open work, by priority
 
-1. **Publish the package repo** *(owner decision; outward-facing)*. `image/scripts/publish-repo.sh` uploads the signed
-   repo to the rolling GitHub release `repo`; installed systems already point at
-   `https://github.com/VectorSophie/TorchOS/releases/download/repo`. **Until it is published, `torch update` on an
-   installed system fails** at "failed to retrieve some files" for `torchos`. Back up `~/.torchos-signing` (the private
-   signing key, WSL only) before anything else happens to that machine.
+1. *(done 2026-09-28)* Package repo published as the GitHub release `repo`. To update it: build-packages,
+   sign-repo, then `image/scripts/publish-repo.sh` (needs `gh` in WSL) or upload `image/repo` with Windows `gh`
+   (`gh release upload repo --clobber`; copy `torchos.db`/`.files` as real files, not symlinks). Back up
+   `~/.torchos-signing` (the private signing key, WSL only).
 2. **Release ISO**: rebuild without `DEV_SSH_PUBKEY` from the final tree, smoke-test live boot, record the checksum
    (section 5).
 3. **Real hardware** (Phase 6): nothing has run outside QEMU. Intel iGPU first (i915 default), then suspend/resume.
@@ -130,7 +129,7 @@ Setup that exists on the owner's machine:
       git history: rewrite only with the owner's say-so). The signing key's private half is not in the repo.
 - [x] VM disks and ISOs ignored by Git
 - [x] `docs/known-issues.md` reconciled with section 1 above
-- [ ] package repo published (section 4, item 1)
+- [x] package repo published (GitHub release `repo`)
 - [ ] release ISO rebuilt from the final tree without `DEV_SSH_PUBKEY`, smoke-tested, checksum recorded
       (the 2026-09-26 release ISO predates this session's fixes)
 - [ ] install and recovery guides walked through by someone who did not write them
