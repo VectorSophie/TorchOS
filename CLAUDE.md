@@ -119,7 +119,7 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       tokens validated (single use, bound to op/args/uid); `torch update` = full upgrade with a network wait;
       greetd + tuigreet login; GRUB defaults to `linux`, no BootNext clutter; grub-btrfs overlay hook so snapshot
       boots work (verified); live-ISO `systemd-loop@sr0` masked; installer removes itself; signed `[torchos]` repo +
-      `torchos-keyring` + sign/publish scripts (not yet published); `torch doctor` live/snapshot-boot aware.
+      `torchos-keyring` + sign/publish scripts (published 2026-09-28 as GitHub release `repo`); `torch doctor` live/snapshot-boot aware.
 - [ ] Phase 3: AI assistant (Agent SDK + MCP) wired to `torchd`
 - [x] Phase 4: `torch install` resolver — repo → Flathub → gated AUR → Distrobox, plus files (.pkg.tar.zst,
       .AppImage, .flatpakref, .exe/.msi, .deb, .rpm). Repo/AUR/AppImage/Distrobox verified in the VM; Flatpak
@@ -133,8 +133,8 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
 
 Full handoff: **`docs/handoff.md`**. In one paragraph: blank disk → install → greetd login → signed-repo update →
 CachyOS kernel → snapshot boot → rollback all work in a VM, and the whole loop runs on the owner's Windows machine
-in WSL2 (`RENDER=virgl`). What remains: a release ISO from the final tree, real hardware, LUKS/BIOS/dual boot, Secure Boot. Nothing is pushed
-(`master` is ahead of `origin/master`); commit history is the decision record. **Never commit** `image/vm/`,
+in WSL2 (`RENDER=virgl`). What remains: a release ISO from the final tree, real hardware, LUKS/BIOS/dual boot, Secure Boot. Pushed to GitHub
+(2026-09-28); commit history is the decision record. **Never commit** `image/vm/`,
 `image/out/`, `image/repo/`, `image/build/` (all gitignored), any credential, or the signing key (`~/.torchos-signing`).
 
 ## Gotchas

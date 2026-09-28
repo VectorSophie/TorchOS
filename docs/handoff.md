@@ -1,7 +1,7 @@
 # TorchOS handoff (2026-09-27, second session)
 
 For a fresh Claude Code session, on the Linux machine **or on Windows (WSL2)**. Read `CLAUDE.md` first (rules and
-locked decisions), then this file. Nothing has been pushed: `master` is ahead of `origin/master`, and the
+locked decisions), then this file. Code pushed to GitHub 2026-09-28, and the
 package repository **is published** (GitHub release `repo`, 2026-09-28).
 
 ## 1. Where things stand
