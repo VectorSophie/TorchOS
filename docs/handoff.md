@@ -25,6 +25,10 @@ patching inside the guest** (driven by `image/scripts/dev/drive_install.py`):
    demand), Distrobox (Debian container, CLI exported to `~/.local/bin`).
 10. `torch snapshot create` -> change -> `torch snapshot rollback N` -> reboot -> change gone, `/home` kept.
 
+Final confirmation run (2026-09-28, last ISO of the session, no manual patching): install OK in ~5 min; the
+installed disk boots `linux`, GRUB shows only *TorchOS Linux / Advanced options / TorchOS snapshots*, installer
+packages gone, one clean "fresh install" snapshot, torchd unit without `ProtectKernelModules`, doctor all OK.
+
 | area | status |
 |---|---|
 | `torchd` broker, `torch` CLI, hardened unit | VERIFIED |
@@ -75,7 +79,7 @@ Read `image/scripts/dev/README.md` before touching the harness: it records the t
 ## 3. Resume on Windows: WSL2 runs the whole loop
 
 The earlier assumption ("no KVM on Windows") was wrong for this machine: WSL2 exposes **nested KVM** (`/dev/kvm`),
-and Docker runs natively inside WSL. Everything in section 2 runs there, including the Calamares install (~18 min)
+and Docker runs natively inside WSL. Everything in section 2 runs there, including the Calamares install (~5 min; ~18 min when Windows is short of RAM)
 and reboots. This session's full verification was done this way.
 
 Setup that exists on the owner's machine:
