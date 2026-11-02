@@ -22,9 +22,36 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 | `torch install`: repo, AUR (`--aur`), AppImage, Distrobox | VERIFIED |
 | `torch install`: Flathub | name resolution VERIFIED, install UNVERIFIED |
 | `torch install`: `.exe`/`.msi` (Wine), `.rpm` (Fedora box) | UNVERIFIED |
-| BIOS install, LUKS, manual partitioning, dual boot, Secure Boot | unsupported / untested |
+| BIOS install, LUKS, manual partitioning, dual boot, Secure Boot | unsupported / untested; the installer is designed to refuse the first four (not yet VM-verified, below) |
 | real hardware, NVIDIA, suspend/resume | untested |
 | hosted package repo (GitHub release `repo`) | PUBLISHED, pacman sync + signature VERIFIED |
+
+## Installer: what it accepts
+
+> **Status: implemented, NOT VERIFIED, NOT READY for release.** Everything in this section has passed only static,
+> unit and simulated container tests (`image/tests/run.sh`). Package compilation succeeded; the ISO build stopped
+> when the build host's disk filled. No ISO built from this change, no VM installation, no independent disk boot
+> and no rollback regression run has been observed. The VM verification still to run, on Linux, is in
+> `image/tests/vm/README.md`.
+
+The one path tested end to end before this change (earlier ISOs): **UEFI firmware, "Erase disk" on one whole disk, GPT, Btrfs (`@ @home @log @cache
+@snapshots`), no encryption, no swap partition (zram instead).** The change is designed to refuse everything
+else before any disk is written:
+- `partition.conf` offers only that: manual partitioning off, encryption checkbox off, Btrfs the only file system,
+  swap "none".
+- The `torchpreflight` job runs first in the exec phase, before `partition`, and fails the installation, with
+  "Nothing on any disk has been changed", on a BIOS boot, any choice other than erase (Calamares still offers
+  "alongside"/"replace" on disks that hold an OS and has no option to hide them), a swap partition, an
+  encryption passphrase, or a non-Btrfs file system. A failed job makes Calamares skip all later jobs.
+- After partitioning, `torch-target-setup` re-checks the actual result (efivarfs, Btrfs root on `/@`, no dm-crypt,
+  GPT, FAT ESP, `@snapshots` in fstab) before relying on it.
+
+Install steps are REQUIRED (failure = no bootable, loggable-in, repo-trusting, recoverable system; the
+installation fails and no boot entry is written) or OPTIONAL (recorded, warned, installation continues). The
+classification and the reason for each is in `image/calamares/usr/lib/torchos/torch-target-setup`; results are
+written to `/var/log/torchos-install-steps.tsv` on the installed system. `torch-target-verify` then checks the
+boot chain the bootloader job wrote (grub.cfg parses and boots `linux` from `@`, snapshot menu present, EFI
+loaders present, GRUB's own btrfs driver reads every kernel and initramfs completely).
 
 ## Known defects (not fixed)
 - `hyprpaper` wallpaper does not render in the VM (DRM/GBM), see CLAUDE.md gotchas.

@@ -16,3 +16,9 @@ image/vm/*.fd
 image/vm/*.log
 image/vm/*.sock
 image/vm/.testpw
+# VM test runs (image/tests/vm/): per-run disks, firmware variables, screenshots, logs
+image/vm/*.vars
+image/vm/evidence/
+# Python byte code from running the tests
+__pycache__/
+*.pyc

@@ -8,6 +8,8 @@
 #
 # Env: RAM=2048 CPUS=2 DISPLAY_MODE=gtk|vnc (default gtk; vnc listens on :1 = port 5901)
 #      RENDER=blob|virgl|plain (default blob; virgl on WSL2)  SSH_PORT=2222 (guest :22 forwarded to host localhost)
+#      FIRMWARE=bios (iso mode only): boot the ISO with SeaBIOS instead of OVMF, to test that the
+#      installer refuses BIOS installs (unsupported) before touching the disk
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 MODE=${1:-installed}
@@ -58,7 +60,8 @@ case $MODE in
     [[ -f ${ISO:-} ]] || { echo "no ISO found; build one with image/scripts/build-iso.sh" >&2; exit 1; }
     ensure_blank
     echo "ISO:  $ISO"; echo "DISK: $BLANK (blank test disk, the only writable disk)"
-    exec qemu-system-x86_64 "${COMMON[@]}" "${UEFI[@]}" \
+    FW=("${UEFI[@]}"); [[ ${FIRMWARE:-uefi} == bios ]] && FW=()
+    exec qemu-system-x86_64 "${COMMON[@]}" "${FW[@]}" \
       -drive file="$BLANK",if=virtio,format=qcow2 \
       -drive file="$ISO",media=cdrom,readonly=on -boot order=d ;;
   disk)

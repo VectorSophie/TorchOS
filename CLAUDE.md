@@ -21,6 +21,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Read `docs/handoff.md` first** — current verified state, how to resume on Linux or Windows/WSL2, the
 prioritized open work, and the test-harness gotchas. This file keeps the durable rules and decisions.
 
+**Proposed direction (2026-11-02, awaiting owner approval):**
+`docs/superpowers/specs/2026-11-02-torchos-direction.md` — audit, defects found by code reading, the
+three-layer plan, and the first tasks. Where it conflicts with the locked table below, the table still
+governs until the owner approves; then update the table. Its first slice (installation correctness) is on
+branch `feat/torchos-install-correctness`, NOT READY until the VM verification in `image/tests/vm/README.md`
+has run on Linux.
+
 TorchOS v2 is a from-scratch rebuild, approved 2026-08-24. Full rationale for every decision below:
 **`docs/superpowers/specs/2026-08-24-torchos-v2-architecture-design.md`** (the locked spec) and its
 research appendix in `docs/research/*.md` (7 files — prior-art review of SimpleOS/VibeOS/FableOS/

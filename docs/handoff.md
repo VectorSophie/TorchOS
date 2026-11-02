@@ -1,5 +1,11 @@
 # TorchOS handoff (2026-09-27, second session)
 
+> **Update 2026-11-02:** development moves to a native Linux machine. Work in progress on branch
+> `feat/torchos-install-correctness`: the installation-correctness slice (pre-partition install gate,
+> required/optional install steps, boot-chain check), NOT READY. It has passed static, unit and container tests
+> only. Its VM verification is still to run: `image/tests/vm/README.md`. Direction and plan:
+> `docs/superpowers/specs/2026-11-02-torchos-direction.md`. Everything below describes `master` as of 2026-09-28.
+
 For a fresh Claude Code session, on the Linux machine **or on Windows (WSL2)**. Read `CLAUDE.md` first (rules and
 locked decisions), then this file. Code pushed to GitHub 2026-09-28, and the
 package repository **is published** (GitHub release `repo`, 2026-09-28).

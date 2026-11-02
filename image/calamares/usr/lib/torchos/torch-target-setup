@@ -1,70 +1,197 @@
 #!/usr/bin/bash
-# Runs inside the freshly unpacked target (chroot) as a Calamares shellprocess.
-# Turns the copied live rootfs into an installed system. Log: /var/log/torchos-install.log
-# Steps are ordered so a failure in a nice-to-have (snapper, grub-btrfs) never blocks boot.
+# Runs inside the freshly unpacked target (chroot) as a Calamares shellprocess, after the users/fstab jobs
+# and before grubcfg/bootloader. Turns the copied live rootfs into an installed system.
+#   Log: /var/log/torchos-install.log      Step results: /var/log/torchos-install-steps.tsv
+#
+# Every step is REQUIRED or OPTIONAL.
+#   REQUIRED: without it the installed system would not boot, could not log in, could not trust its
+#     package repositories, or would lack the recovery TorchOS advertises (checkpoints, rollback, booting
+#     a snapshot from GRUB). A required failure exits non-zero: Calamares marks this job failed, skips
+#     every later job (grubcfg, bootloader: no boot entry is written for a broken system) and shows
+#     "Installation Failed" instead of claiming success.
+#   OPTIONAL: the system stays bootable and recoverable without it. The failure is recorded and printed.
+# Steps check their results instead of trusting exit codes. There is deliberately no `set -e`: some
+# non-zero statuses are expected (grep -q, an absent account), and the pacman transaction in step 5 may
+# fail on its own because what matters, the initramfs it builds, is verified separately.
+# The boot chain written by the later Calamares jobs is checked by torch-target-verify.
 exec > >(tee -a /var/log/torchos-install.log) 2>&1
 set -x
+STEPS=/var/log/torchos-install-steps.tsv
+: > "$STEPS"
 
-## 1. Remove everything that only exists for the live session.
-rm -f /usr/lib/sysusers.d/torch-live.conf /etc/sudoers.d/99-torch-live \
-      /etc/systemd/system/getty@tty1.service.d/autologin.conf \
-      /etc/systemd/system/multi-user.target.wants/torch-live-setup.service \
-      /etc/systemd/system/torch-live-setup.service \
-      /usr/local/bin/torch-live-setup /usr/local/bin/calamares-launch /etc/profile.d/torchos-hyprland.sh \
-      /etc/mkinitcpio.conf.d/archiso.conf /etc/hostname.live
-rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
-rm -rf /home/liveuser
-userdel liveuser 2>/dev/null || true   # account can exist in the copied passwd/shadow/group
-groupdel liveuser 2>/dev/null || true
-rm -f /etc/systemd/system/pacman-init.service /etc/systemd/system/etc-pacman.d-gnupg.mount \
-      /etc/systemd/system/multi-user.target.wants/pacman-init.service
-# The live image masks firstboot (no interactive prompt); the installed system does not need it either
-# (Calamares sets locale/timezone/machine-id), but leave it unmasked so it is not silently disabled.
-rm -f /etc/systemd/system/systemd-firstboot.service
-# Live-only mask (systemd#43605: systemd-loop@sr0 fails on archiso optical boots); installed systems keep it.
-rm -f /etc/systemd/system/systemd-loop@.service
+record() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$STEPS"; }
+required() {
+  local name=$1; shift
+  if "$@"; then record required "$name" ok; return 0; fi
+  record required "$name" FAILED
+  echo "TORCHOS INSTALL FAILED: required step '$name' failed, so the installed system would not be usable." >&2
+  echo "Nothing claims success. Details: /var/log/torchos-install.log on the target disk." >&2
+  exit 1
+}
+optional() {
+  local name=$1; shift
+  if "$@"; then record optional "$name" ok; return 0; fi
+  record optional "$name" failed
+  echo "WARN: optional step '$name' failed; the system stays bootable and recoverable without it." >&2
+}
+# check <what> <command...>: run a verification and say which one failed.
+check() {
+  local what=$1; shift
+  "$@" && return 0
+  echo "CHECK FAILED: $what" >&2
+  return 1
+}
+enable_unit() {
+  systemctl enable "$1" && check "$1 is enabled" systemctl is-enabled --quiet "$1"
+}
 
-## 2. Normal initramfs (the live one boots through archiso hooks) for every installed kernel.
-for d in /usr/lib/modules/*/; do
-  base=$(cat "$d/pkgbase" 2>/dev/null) || continue
-  # Calamares unpacks with `rsync -S`, which turns the kernel's trailing zero padding into a hole at
-  # EOF. Linux reads that fine but GRUB's btrfs driver stops at the last real extent ("premature end
-  # of file"). Copy densely, no reflink, so the tail is real data. Verified with grub-fstest.
-  if [ -f "$d/vmlinuz" ]; then
-    cp --sparse=never --reflink=never "$d/vmlinuz" "/boot/vmlinuz-$base" && chmod 644 "/boot/vmlinuz-$base"
-    cmp -s "$d/vmlinuz" "/boot/vmlinuz-$base" || echo "ERROR: /boot/vmlinuz-$base differs from source"
-  fi
-  cat > "/etc/mkinitcpio.d/$base.preset" <<PRESET
+## 1. REQUIRED: the target is the one supported layout. torchpreflight rejected unsupported choices
+##    before partitioning; this checks what was actually created. Everything below, and torchd's
+##    rollback, assumes this layout: UEFI, GPT, Btrfs root as subvolume @, no encryption, a FAT ESP,
+##    snapshots in the separate @snapshots subvolume.
+check_layout() {
+  local dev disk
+  check "booted in UEFI mode (efivarfs mounted)" \
+    test "$(findmnt -no FSTYPE /sys/firmware/efi/efivars)" = efivarfs || return 1
+  check "root file system is btrfs" test "$(findmnt -no FSTYPE /)" = btrfs || return 1
+  check "root is subvolume /@" sh -c 'findmnt -no OPTIONS / | grep -Eq "(^|,)subvol=/@(,|$)"' || return 1
+  dev=$(findmnt -no SOURCE / | sed 's/\[.*//')
+  check "root is not encrypted" sh -c "! lsblk -nso TYPE '$dev' | grep -qx crypt" || return 1
+  disk=$(lsblk -nso PKNAME "$dev" | head -1)
+  check "partition table is GPT" test "$(lsblk -dno PTTYPE "/dev/$disk")" = gpt || return 1
+  check "FAT EFI system partition at /boot/efi" test "$(findmnt -no FSTYPE /boot/efi)" = vfat || return 1
+  check "fstab mounts @snapshots at /.snapshots" \
+    grep -Eq '^[^#[:space:]]+[[:space:]]+/\.snapshots[[:space:]]+btrfs[[:space:]]+([^[:space:]]*,)?subvol=/@snapshots(,|[[:space:]])' /etc/fstab
+}
+required target-layout check_layout
+
+## 2. REQUIRED: remove everything that only exists for the live session. Left behind, the passwordless
+##    sudo rule and tty autologin would be a hole, and the archiso initramfs config would break boot.
+remove_live_session() {
+  rm -f /usr/lib/sysusers.d/torch-live.conf /etc/sudoers.d/99-torch-live \
+        /etc/systemd/system/getty@tty1.service.d/autologin.conf \
+        /etc/systemd/system/multi-user.target.wants/torch-live-setup.service \
+        /etc/systemd/system/torch-live-setup.service \
+        /usr/local/bin/torch-live-setup /usr/local/bin/calamares-launch /etc/profile.d/torchos-hyprland.sh \
+        /etc/mkinitcpio.conf.d/archiso.conf /etc/hostname.live \
+        /etc/systemd/system/pacman-init.service /etc/systemd/system/etc-pacman.d-gnupg.mount \
+        /etc/systemd/system/multi-user.target.wants/pacman-init.service || return 1
+  # The live image masks firstboot (no interactive prompt); the installed system does not need it either
+  # (Calamares sets locale/timezone/machine-id), but leave it unmasked so it is not silently disabled.
+  # systemd-loop@ is masked on the live ISO only (systemd#43605); installed systems keep it.
+  rm -f /etc/systemd/system/systemd-firstboot.service /etc/systemd/system/systemd-loop@.service || return 1
+  rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null   # absent already: fine
+  rm -rf /home/liveuser || return 1
+  # The account can exist in the copied passwd/shadow/group. "Does not exist" is not an error.
+  if getent passwd liveuser >/dev/null; then userdel liveuser || return 1; fi
+  if getent group liveuser >/dev/null; then groupdel liveuser || return 1; fi
+  check "no liveuser account" sh -c '! getent passwd liveuser' || return 1
+  check "no live sudo rule" test ! -e /etc/sudoers.d/99-torch-live || return 1
+  check "no tty autologin" test ! -e /etc/systemd/system/getty@tty1.service.d/autologin.conf || return 1
+  check "no archiso initramfs config" test ! -e /etc/mkinitcpio.conf.d/archiso.conf
+}
+required remove-live-session remove_live_session
+
+## 3. REQUIRED: kernel images in /boot and an mkinitcpio preset for every installed kernel.
+install_kernels() {
+  local d base
+  for d in /usr/lib/modules/*/; do
+    [ -f "$d/pkgbase" ] || continue          # not a kernel package's module directory
+    base=$(cat "$d/pkgbase") || return 1
+    check "$d has a kernel image" test -f "$d/vmlinuz" || return 1
+    # Calamares unpacks with `rsync -S`, which turns the kernel's trailing zero padding into a hole at
+    # EOF. Linux reads that fine but GRUB's btrfs driver stops at the last real extent ("premature end
+    # of file"). Copy densely, no reflink, so the tail is real data. torch-target-verify re-reads it
+    # through GRUB's own driver.
+    cp --sparse=never --reflink=never "$d/vmlinuz" "/boot/vmlinuz-$base" || return 1
+    chmod 644 "/boot/vmlinuz-$base" || return 1
+    check "/boot/vmlinuz-$base equals its source" cmp -s "$d/vmlinuz" "/boot/vmlinuz-$base" || return 1
+    cat > "/etc/mkinitcpio.d/$base.preset" <<PRESET || return 1
 ALL_kver="/boot/vmlinuz-$base"
 PRESETS=('default' 'fallback')
 default_image="/boot/initramfs-$base.img"
 fallback_image="/boot/initramfs-$base-fallback.img"
 fallback_options="-S autodetect"
 PRESET
-done
-# busybox init + grub-btrfs-overlayfs: booting a read-only snapshot from the GRUB menu gets a
-# writable overlay (changes vanish on reboot) instead of a half-working read-only root. The hook is a
-# runtime busybox hook; Arch's default systemd-based initramfs never runs it.
-echo 'HOOKS=(base udev autodetect microcode modconf kms keyboard keymap block filesystems fsck grub-btrfs-overlayfs)' \
-  > /etc/mkinitcpio.conf.d/torchos.conf
-# The installer and live-ISO tooling have no job on an installed system. Removing mkinitcpio-archiso
-# fires pacman's mkinitcpio hook, which builds every preset above: that *is* the initramfs build
-# (a separate `mkinitcpio -P` doubled install time by ~3 min). This script belongs to
-# torch-installer-config; bash already has it open, so removing it mid-run is safe.
-if ! pacman -Rns --noconfirm calamares torch-installer-config archiso mkinitcpio-archiso; then
-  echo "WARN: could not remove installer packages"
-  mkinitcpio -P || echo "WARN: mkinitcpio -P failed"
-fi
+  done
+  # GRUB's default entry (GRUB_TOP_LEVEL) and Calamares' bootloader.conf both name this kernel.
+  check "the default kernel (linux) is installed" test -s /boot/vmlinuz-linux
+}
+required kernel-images install_kernels
 
-## 3. Keyring + TorchOS package repo, zram, login, services.
-pacman-key --init && pacman-key --populate archlinux
-pacman-key --populate torchos || echo "WARN: torchos keyring missing: torch-* updates will fail signature checks"
-# Hosted, signed repo so torch-* packages update like everything else (image/scripts/publish-repo.sh).
-grep -q '^\[torchos\]' /etc/pacman.conf ||
-  printf '\n[torchos]\nServer = https://github.com/VectorSophie/TorchOS/releases/download/repo\n' >> /etc/pacman.conf
-# Login: greetd + tuigreet (text greeter, remembers the last user/session) instead of tty autologin.
-mkdir -p /etc/greetd
-cat > /etc/greetd/config.toml <<'GREETD'
+## 4. REQUIRED: initramfs configuration. busybox init + grub-btrfs-overlayfs: booting a read-only
+##    snapshot from the GRUB menu gets a writable overlay (changes vanish on reboot) instead of a
+##    half-working read-only root. The hook is a runtime busybox hook; Arch's default systemd-based
+##    initramfs never runs it. Without it the advertised snapshot boot does not work.
+configure_initramfs() {
+  echo 'HOOKS=(base udev autodetect microcode modconf kms keyboard keymap block filesystems fsck grub-btrfs-overlayfs)' \
+    > /etc/mkinitcpio.conf.d/torchos.conf || return 1
+  check "grub-btrfs-overlayfs initcpio hook is installed" test -f /usr/lib/initcpio/hooks/grub-btrfs-overlayfs
+}
+required initramfs-config configure_initramfs
+
+## 5. OPTIONAL: remove the installer and live-ISO tooling; they have no job on an installed system and
+##    leftovers only cost disk space. This transaction is ALSO what normally builds the initramfs:
+##    removing mkinitcpio-archiso fires pacman's mkinitcpio hook, which builds every preset from step 3
+##    (a separate `mkinitcpio -P` doubled install time by ~3 min). That build is not trusted to have
+##    happened: step 6 verifies it and builds once more only if it is missing. This script belongs to
+##    torch-installer-config; bash already has it open, so removing it mid-run is safe.
+MARK=$(mktemp /var/tmp/torchos-initramfs.XXXXXX)   # images newer than this were built by this install
+trap 'rm -f "$MARK"' EXIT
+optional remove-installer-packages pacman -Rns --noconfirm calamares torch-installer-config archiso mkinitcpio-archiso
+
+## 6. REQUIRED: a fresh default and fallback initramfs for every preset, containing the overlay hook and
+##    no archiso hook. GRUB boots these; the fallback images are the menu's recovery entries.
+lacks_archiso_hook() { ! grep -q '^hooks/archiso' <<<"$1"; }
+initramfs_built() {
+  local p base img list n=0
+  for p in /etc/mkinitcpio.d/*.preset; do
+    [ -f "$p" ] || continue
+    base=$(basename "$p" .preset)
+    for img in "/boot/initramfs-$base.img" "/boot/initramfs-$base-fallback.img"; do
+      check "$img exists and was built by this install" sh -c "[ -s '$img' ] && [ '$img' -nt '$MARK' ]" || return 1
+      list=$(lsinitcpio "$img") || { echo "CHECK FAILED: cannot list $img" >&2; return 1; }
+      check "$img contains the snapshot-boot overlay hook" grep -qx 'hooks/grub-btrfs-overlayfs' <<<"$list" || return 1
+      check "$img contains no archiso hook" lacks_archiso_hook "$list" || return 1
+      n=$((n + 1))
+    done
+  done
+  check "at least one initramfs was built" test "$n" -gt 0
+}
+if ! initramfs_built; then
+  # The step-5 transaction failed, or its hook did. Build once here; the result is verified below.
+  record optional initramfs-from-package-hook missing
+  mkinitcpio -P
+fi
+required initramfs initramfs_built
+
+## 7. REQUIRED: package repository trust. Without the Arch and TorchOS keys every `torch update` fails
+##    signature checks, and with no [torchos] repo the torch-* packages never update.
+trust_repos() {
+  local fpr n=0
+  pacman-key --init || return 1
+  pacman-key --populate archlinux || return 1
+  pacman-key --populate torchos || return 1
+  check "TorchOS keyring package lists a trusted key" test -s /usr/share/pacman/keyrings/torchos-trusted || return 1
+  for fpr in $(cut -d: -f1 /usr/share/pacman/keyrings/torchos-trusted); do
+    check "TorchOS signing key $fpr is in the pacman keyring" pacman-key --list-keys "$fpr" >/dev/null || return 1
+    n=$((n + 1))
+  done
+  check "at least one TorchOS key checked" test "$n" -gt 0 || return 1
+  # Hosted, signed repo so torch-* packages update like everything else (image/scripts/publish-repo.sh).
+  grep -q '^\[torchos\]' /etc/pacman.conf ||
+    printf '\n[torchos]\nServer = https://github.com/VectorSophie/TorchOS/releases/download/repo\n' >> /etc/pacman.conf ||
+    return 1
+  check "[torchos] repo is configured" grep -q '^\[torchos\]' /etc/pacman.conf
+}
+required package-trust trust_repos
+
+## 8. REQUIRED: the login path. greetd + tuigreet (text greeter, remembers the last user/session) instead
+##    of tty autologin, and an account that can actually log in through it.
+configure_login() {
+  local b name uid home shell can_login=no
+  mkdir -p /etc/greetd || return 1
+  cat > /etc/greetd/config.toml <<'GREETD' || return 1
 [terminal]
 vt = 1
 
@@ -72,41 +199,73 @@ vt = 1
 command = "tuigreet --time --remember --remember-user-session --asterisks --greeting 'Welcome to TorchOS' --cmd start-hyprland"
 user = "greeter"
 GREETD
-mkdir -p /etc/systemd
-printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
-for u in NetworkManager.service bluetooth.service torchd.service power-profiles-daemon.service \
-         systemd-timesyncd.service fstrim.timer cups.socket \
-         snapper-timeline.timer snapper-cleanup.timer grub-btrfsd.service greetd.service; do
-  systemctl enable "$u" || echo "WARN: could not enable $u"
+  for b in greetd tuigreet start-hyprland Hyprland; do
+    check "$b is installed" command -v "$b" >/dev/null || return 1
+  done
+  check "the greeter account exists" getent passwd greeter >/dev/null || return 1
+  enable_unit greetd.service || return 1
+  # The account Calamares created: a normal uid, a login shell, a home, and a usable password.
+  while IFS=: read -r name _ uid _ _ home shell; do
+    [ "$uid" -ge 1000 ] 2>/dev/null && [ "$uid" -lt 60000 ] || continue
+    if [ -d "$home" ] && grep -qxF "$shell" /etc/shells && [ "$(passwd -S "$name" | cut -d' ' -f2)" = P ]; then
+      can_login=yes
+    fi
+  done < /etc/passwd
+  check "a user account can log in (uid >= 1000, login shell, home, password)" test "$can_login" = yes
+}
+required login configure_login
+
+## 9. REQUIRED: services the advertised functions depend on. torchd brokers torch update/snapshot/
+##    rollback; NetworkManager is the only network stack, without it nothing can be updated or repaired
+##    from the repos.
+core_services() { enable_unit NetworkManager.service && enable_unit torchd.service; }
+required core-services core_services
+
+## 10. OPTIONAL: conveniences. Each one missing leaves a bootable, recoverable system.
+optional zram sh -c "mkdir -p /etc/systemd && printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf"
+# snapper-cleanup only bounds how many snapshots accumulate; rollback works without it.
+for u in bluetooth.service power-profiles-daemon.service systemd-timesyncd.service fstrim.timer cups.socket \
+         snapper-timeline.timer snapper-cleanup.timer; do
+  optional "enable $u" enable_unit "$u"
 done
 
-## 4. Snapper on the root Btrfs (skipped cleanly on non-Btrfs roots) + the first checkpoint,
-##    taken *before* grub-mkconfig so grub-btrfs sees it.
-##    Layout: snapshots live in the separate @snapshots subvolume mounted at /.snapshots (already in
-##    fstab from Calamares), NOT nested in @, so swapping @ during a rollback never loses them.
-##    snapper create-config refuses an existing /.snapshots and makes its own nested subvolume, so:
-##    unmount ours, let snapper create, delete the nested one, remount ours.
-if [ "$(findmnt -no FSTYPE /)" = btrfs ] && grep -q '/.snapshots' /etc/fstab; then
-  umount /.snapshots 2>/dev/null; rmdir /.snapshots 2>/dev/null
-  if snapper --no-dbus -c root create-config /; then
-    btrfs subvolume delete /.snapshots
-    mkdir -p /.snapshots && chmod 750 /.snapshots
-    mount /.snapshots || echo "ERROR: could not mount /.snapshots"
-    snapper --no-dbus -c root set-config TIMELINE_CREATE=no NUMBER_LIMIT=10 NUMBER_LIMIT_IMPORTANT=6 \
-        ALLOW_GROUPS=wheel SYNC_ACL=yes
-    snapper --no-dbus -c root create -d "TorchOS fresh install" -u important=yes
-  else
-    echo "WARN: snapper create-config failed"
-  fi
-fi
+## 11. REQUIRED: snapshots, the first checkpoint and the GRUB snapshot menu, i.e. the recovery TorchOS
+##     advertises. Taken *before* grub-mkconfig (Calamares' bootloader job) so grub-btrfs sees snapshot 1.
+##     Layout: snapshots live in the separate @snapshots subvolume mounted at /.snapshots (in fstab from
+##     Calamares), NOT nested in @, so swapping @ during a rollback never loses them. snapper
+##     create-config refuses an existing /.snapshots and makes its own nested subvolume, so: unmount
+##     ours, let snapper create, delete the nested one, remount ours.
+configure_snapshots() {
+  check "recovery packages are installed" pacman -Q snapper snap-pac grub-btrfs inotify-tools >/dev/null || return 1
+  if mountpoint -q /.snapshots; then umount /.snapshots || return 1; fi
+  rmdir /.snapshots || return 1
+  snapper --no-dbus -c root create-config / || return 1
+  btrfs subvolume delete /.snapshots || return 1
+  mkdir -p /.snapshots && chmod 750 /.snapshots || return 1
+  mount /.snapshots || return 1
+  check "/.snapshots is the separate @snapshots subvolume" \
+    sh -c 'findmnt -no SOURCE /.snapshots | grep -qF "[/@snapshots]"' || return 1
+  snapper --no-dbus -c root set-config TIMELINE_CREATE=no NUMBER_LIMIT=10 NUMBER_LIMIT_IMPORTANT=6 \
+      ALLOW_GROUPS=wheel SYNC_ACL=yes || return 1
+  snapper --no-dbus -c root create -d "TorchOS fresh install" -u important=yes || return 1
+  check "the fresh-install snapshot exists" \
+    sh -c 'snapper --no-dbus -c root list | grep -qF "TorchOS fresh install"' || return 1
+  # grub-btrfsd regenerates the GRUB snapshot menu when snapshots are created later.
+  enable_unit grub-btrfsd.service
+}
+required snapshots configure_snapshots
 
-## 5. Development ISOs only (build-iso.sh with DEV_SSH_PUBKEY): keep sshd + serial console for testing.
-if [ -f /etc/torch-dev-build ]; then
-  systemctl enable sshd.service
+## 12. OPTIONAL, development ISOs only (build-iso.sh with DEV_SSH_PUBKEY): sshd + serial console for testing.
+dev_access() {
+  local h u
+  systemctl enable sshd.service || return 1
   for h in /home/*/; do
-    u=$(basename "$h"); mkdir -p "$h.ssh"; cp /etc/ssh/dev_authorized_keys "$h.ssh/authorized_keys"
-    chown -R "$u:$u" "$h.ssh"; chmod 700 "$h.ssh"; chmod 600 "$h.ssh/authorized_keys"
+    u=$(basename "$h"); mkdir -p "$h.ssh" && cp /etc/ssh/dev_authorized_keys "$h.ssh/authorized_keys" || return 1
+    chown -R "$u:$u" "$h.ssh" && chmod 700 "$h.ssh" && chmod 600 "$h.ssh/authorized_keys" || return 1
   done
   sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="console=ttyS0,115200 console=tty0"/' /etc/default/grub
-fi
+}
+[ -f /etc/torch-dev-build ] && optional dev-access dev_access
+
+cat "$STEPS"
 exit 0

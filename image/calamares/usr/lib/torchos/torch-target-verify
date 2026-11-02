@@ -1,0 +1,55 @@
+#!/usr/bin/bash
+# Independent check of the boot chain that Calamares' grubcfg + bootloader jobs just wrote. Runs from the
+# live system against the mounted target (shellprocess dontChroot, ${ROOT} = target root), after
+# `bootloader` and before `umount`. Usage: torch-target-verify <target-root>
+#
+# Every check below is REQUIRED (it decides whether the disk boots through its own GRUB menu, or whether
+# the advertised snapshot menu exists) except the firmware boot entry, which is OPTIONAL: some firmware
+# refuses or later drops NVRAM writes, and the removable-media fallback loader still boots the disk.
+# All checks run so the log names every problem; any required failure exits non-zero, which makes
+# Calamares report "Installation Failed".
+set -u
+ROOT=${1:?usage: torch-target-verify <target-root>}
+STEPS=$ROOT/var/log/torchos-install-steps.tsv
+exec > >(tee -a "$ROOT/var/log/torchos-install.log") 2>&1
+echo "== torch-target-verify $ROOT"
+failed=0
+
+result() { printf '%s\t%s\t%s\n' "$1" "verify: $2" "$3" >> "$STEPS"; }
+required() {
+  local what=$1; shift
+  if "$@"; then echo "ok: $what"; result required "$what" ok
+  else echo "CHECK FAILED: $what" >&2; result required "$what" FAILED; failed=1; fi
+}
+optional() {
+  local what=$1; shift
+  if "$@"; then echo "ok: $what"; result optional "$what" ok
+  else echo "WARN: $what (optional)" >&2; result optional "$what" failed; fi
+}
+cfg_has() { grep -Eq "$1" "$ROOT/boot/grub/grub.cfg"; }
+# GRUB reads the target through its own btrfs driver; compare what it reads with the real file.
+grub_reads() { grub-fstest "$DEV" cmp "/@/boot/$1" "$ROOT/boot/$1"; }
+
+CFG=$ROOT/boot/grub/grub.cfg
+DEV=$(findmnt -no SOURCE "$ROOT" | sed 's/\[.*//')
+required "grub.cfg exists" test -s "$CFG"
+required "grub.cfg parses (grub-script-check)" grub-script-check "$CFG"
+required "grub.cfg boots the linux kernel from @" cfg_has '^[[:space:]]*linux[[:space:]]+/@/boot/vmlinuz-linux[[:space:]]'
+required "grub.cfg includes the snapshot menu" cfg_has 'grub-btrfs\.cfg'
+required "snapshot menu lists a snapshot" grep -q '@snapshots/[0-9]*/snapshot' "$ROOT/boot/grub/grub-btrfs.cfg"
+required "EFI loader EFI/TorchOS/grubx64.efi" test -s "$ROOT/boot/efi/EFI/TorchOS/grubx64.efi"
+required "removable-media fallback EFI/boot/bootx64.efi" test -s "$ROOT/boot/efi/EFI/boot/bootx64.efi"
+required "root device found ($DEV)" test -b "$DEV"
+for p in "$ROOT"/etc/mkinitcpio.d/*.preset; do
+  base=$(basename "$p" .preset)
+  for f in "vmlinuz-$base" "initramfs-$base.img" "initramfs-$base-fallback.img"; do
+    required "GRUB reads /boot/$f completely" grub_reads "$f"
+  done
+done
+optional "firmware boot entry for TorchOS" sh -c 'efibootmgr | grep -q TorchOS'
+
+if [ "$failed" -ne 0 ]; then
+  echo "TORCHOS INSTALL FAILED: the installed boot chain did not verify. Nothing claims success." >&2
+  exit 1
+fi
+echo "boot chain verified"

@@ -74,6 +74,12 @@ package_torch-installer-config() {
   install -Dm644 "$srcdir/src/assets/branding/icons/logo-128.png" "$pkgdir/etc/calamares/branding/torchos/logo.png"
   install -Dm644 "$srcdir/src/assets/branding/logo-badge.png" "$pkgdir/etc/calamares/branding/torchos/welcome.png"
   install -Dm755 "$srcdir/src/image/calamares/usr/lib/torchos/torch-target-setup" "$pkgdir/usr/lib/torchos/torch-target-setup"
+  install -Dm755 "$srcdir/src/image/calamares/usr/lib/torchos/torch-target-verify" "$pkgdir/usr/lib/torchos/torch-target-verify"
+  # Pre-partition install gate (settings.conf modules-search points here).
+  for f in module.desc main.py; do
+    install -Dm644 "$srcdir/src/image/calamares/usr/lib/torchos/calamares/modules/torchpreflight/$f" \
+      "$pkgdir/usr/lib/torchos/calamares/modules/torchpreflight/$f"
+  done
 }
 
 package_torchos-keyring() {
