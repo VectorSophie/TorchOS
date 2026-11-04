@@ -6,7 +6,7 @@
 #   run-qemu.sh disk                 boot the blank disk alone (after installing from the ISO)
 #   run-qemu.sh blank-reset          delete and recreate the blank disk + its OVMF vars
 #
-# Env: RAM=2048 CPUS=2 DISPLAY_MODE=gtk|vnc (default gtk; vnc listens on :1 = port 5901)
+# Env: RAM=2048 CPUS=2 DISPLAY_MODE=gtk|vnc (default gtk; vnc listens on 127.0.0.1:5901 only)
 #      RENDER=blob|virgl|plain (default blob; virgl on WSL2)  SSH_PORT=2222 (guest :22 forwarded to host localhost)
 #      FIRMWARE=bios (iso mode only): boot the ISO with SeaBIOS instead of OVMF, to test that the
 #      installer refuses BIOS installs (unsupported) before touching the disk
@@ -23,7 +23,7 @@ OVMF_VARS_TPL=/usr/share/OVMF/OVMF_VARS_4M.fd
 
 case $DISPLAY_MODE in
   gtk) DISP=(-display gtk) ;;
-  vnc) DISP=(-display none -vnc :1) ;;
+  vnc) DISP=(-display none -vnc 127.0.0.1:1) ;;
   *) echo "DISPLAY_MODE must be gtk or vnc" >&2; exit 2 ;;
 esac
 
@@ -36,12 +36,12 @@ if [[ ${RENDER:-blob} == blob ]]; then
 elif [[ $RENDER == virgl ]]; then
   # virgl 3D through the host's GL (WSLg): needs a GL window, so it forces -display gtk,gl=on;
   # VNC stays on :1 for scripted input and `vnc.py shot` (the monitor's screendump fails with GL).
-  GPU=(-device virtio-vga-gl,xres=1280,yres=800); DISP=(-display gtk,gl=on -vnc :1)
+  GPU=(-device virtio-vga-gl,xres=1280,yres=800); DISP=(-display gtk,gl=on -vnc 127.0.0.1:1)
 else
   GPU=(-device virtio-gpu-pci)
 fi
 COMMON=(-name torchos -enable-kvm -cpu host -smp "$CPUS" -m "$RAM"
-  -netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22" -device virtio-net-pci,netdev=net0
+  -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" -device virtio-net-pci,netdev=net0
   "${GPU[@]}" -device qemu-xhci -device usb-tablet -device intel-hda -device hda-duplex
   -monitor unix:image/vm/monitor.sock,server,nowait -serial file:image/vm/serial.log
   "${DISP[@]}")

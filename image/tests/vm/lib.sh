@@ -1,11 +1,16 @@
+# shellcheck shell=bash
 # Shared helpers for the installer VM scenarios in this directory (sourced, not run).
-# STATUS: drafted 2026-11-02 and NEVER EXECUTED (the ISO build on the original host failed first). Expect harness
-# fixes on the first real run; a harness failure is not a product failure. See README.md.
 #
-# Linux host with KVM, OVMF (/usr/share/OVMF), docker, python3, qemu-img; a dev ISO built with DEV_SSH_PUBKEY
-# (sshd + key, needed for every scenario here). Only qcow2 files under image/vm/ are ever written.
+# Linux host with KVM, OVMF (/usr/share/OVMF), docker, python3, qemu-img, ss; a dev ISO built with DEV_SSH_PUBKEY
+# (sshd + key, needed for every scenario here). Only qcow2/vars files under image/vm/ are ever written.
 # Env: TORCH_TEST_PW (or image/vm/.testpw; throwaway password for the test user)  VMRAM (MiB, default 3072)
 #      RENDER=blob|virgl|plain as for image/scripts/run-qemu.sh (default blob)   TORCH_VM_KEY (ssh key, see vmssh.sh)
+#      ISO (default: newest image/out/*.iso)
+#
+# Every check goes through assert/pass/fail: results land in image/vm/evidence/results.tsv, and a scenario exits
+# non-zero if any check failed. Reaching the last line is not a pass; "<scenario>: PASS" is.
+# Process safety: a scenario only ever stops the QEMU process it started itself (by PID), and refuses to start
+# if the SSH/VNC ports are already taken (another VM would otherwise receive our keystrokes).
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.." || exit 2
 PW=${TORCH_TEST_PW:-$(cat image/vm/.testpw 2>/dev/null)}
@@ -14,50 +19,133 @@ export TORCH_TEST_PW=$PW
 VMRAM=${VMRAM:-3072}
 RENDER=${RENDER:-blob}
 OUT=image/vm/evidence; mkdir -p "$OUT"
+QLOG=$OUT/qemu.log
+# shellcheck disable=SC2034  # used by the scenarios that source this file
 BLANK=image/vm/torchos-test-blank-01.qcow2
 ISO=${ISO:-$(ls -t image/out/*.iso 2>/dev/null | head -1)}
 OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS_TPL=/usr/share/OVMF/OVMF_VARS_4M.fd
+SSH_PORT=2222 VNC_PORT=5901   # fixed: vmssh.sh and vnc.py default to these
+SCEN=${SCEN:-$(basename "$0" .sh)}
+RES=$OUT/results.tsv
+NFAIL=0
+VM_PID=
 
 ts() { date +%T; }
+pass() { printf '%s\t%s\tPASS\t%s\n' "$(date -Is)" "$SCEN" "$1" | tee -a "$RES"; }
+fail() { printf '%s\t%s\tFAIL\t%s\n' "$(date -Is)" "$SCEN" "$1" | tee -a "$RES"; NFAIL=$((NFAIL + 1)); }
+assert() { local what=$1; shift; if "$@"; then pass "$what"; else fail "$what"; fi; }
+# A known product defect outside the scenario's subject: recorded and reported, does not fail the scenario.
+defect() { printf '%s\t%s\tDEFECT\t%s\n' "$(date -Is)" "$SCEN" "$1" | tee -a "$RES"; }
+has() { grep -qE -- "$1" <<<"$2"; }        # has <ERE> <text>
+lacks() { ! grep -qE -- "$1" <<<"$2"; }
+finish() {
+  stop_vm
+  if [ "$NFAIL" -eq 0 ]; then echo "$SCEN: PASS ($(ts))"; exit 0; fi
+  echo "$SCEN: FAIL, $NFAIL failed check(s) ($(ts))"; exit 1
+}
+abort() { fail "$1 (scenario aborted)"; finish; }
+trap stop_vm EXIT
+
 live() { VM_USER=liveuser image/scripts/dev/vmssh.sh "$@"; }
 inst() { VM_USER=${TORCH_TEST_USER:-tester} image/scripts/dev/vmssh.sh "$@"; }
+isudo() { inst "echo '$PW' | sudo -S -p '' $*"; }   # root command on the installed system; $* must not contain '
 monitor() { python3 -c "
 import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.connect('image/vm/monitor.sock'); s.recv(4096); s.sendall((sys.argv[1]+'\n').encode()); time.sleep(1)" "$1"; }
 wait_ssh() {  # wait_ssh live|inst [tries x 10 s]
-  for _ in $(seq 1 "${2:-60}"); do "$1" true 2>/dev/null && return 0; sleep 10; done
+  for _ in $(seq 1 "${2:-60}"); do
+    vm_alive || { echo "qemu exited"; return 1; }
+    "$1" true 2>/dev/null && return 0; sleep 10
+  done
   echo "ssh never came up"; return 1
 }
-wait_down() { for _ in $(seq 1 30); do pgrep -f 'qemu-system-x86_64 -name torchos' >/dev/null || return 0; sleep 2; done; }
+# Reboot the installed system and wait until a *new* boot answers (boot_id changed), so a slow shutdown
+# can never be mistaken for the next boot.
+reboot_wait() {
+  local old new; old=$(inst 'cat /proc/sys/kernel/random/boot_id')
+  inst sync; isudo 'systemctl reboot' >/dev/null 2>&1; sleep 20
+  for _ in $(seq 1 60); do
+    vm_alive || return 1
+    new=$(inst 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [ -n "$new" ] && [ "$new" != "$old" ] && return 0
+    sleep 10
+  done
+  return 1
+}
+calamares_mapped() { live 'hyprctl clients | grep -q io.calamares.calamares' 2>/dev/null; }
+# The live session should start Calamares itself (conf.d/live.conf). Hyprland >= 0.57 ignores TorchOS's hyprlang
+# config (defect D1, see the verification report), so if it does not appear, record that and start it the way
+# live.conf would, so the installer itself can still be verified.
 wait_calamares() {
-  for _ in $(seq 1 40); do live 'hyprctl clients | grep -q io.calamares.calamares' 2>/dev/null && { sleep 10; return 0; }; sleep 5; done
+  for _ in $(seq 1 18); do calamares_mapped && { sleep 10; return 0; }; sleep 5; done
+  defect "D1 live session did not autostart Calamares (Hyprland $(live 'pacman -Q hyprland 2>/dev/null | cut -d" " -f2'), config $(live 'hyprctl configerrors >/dev/null; ls ~/.config/hypr/hyprland.lua 2>/dev/null || echo hyprland.conf')); harness launches calamares-launch over SSH"
+  live '(nohup calamares-launch >/dev/null 2>&1 &); sleep 1'
+  for _ in $(seq 1 40); do calamares_mapped && { sleep 10; return 0; }; sleep 5; done
   echo "calamares never mapped"; return 1
 }
 shot() { python3 image/scripts/dev/vnc.py shot "$OUT/$1.png" >/dev/null 2>&1 && echo "screenshot: $OUT/$1.png"; }
-stop_vm() { monitor quit 2>/dev/null; wait_down; pkill -f 'qemu-system-x86_64 -name torchos' 2>/dev/null; wait_down; }
 mem() { echo "mem $(ts): $(free -m | awk '/Mem:/{print "used="$3"M avail="$7"M"}')"; }
-install_via_ui() {  # drive Calamares Welcome -> Install with the test user; rc 0 = success, 1 = installer failure
+
+# --- QEMU process ownership -------------------------------------------------------------------------------
+listeners() { ss -Hltn "( sport = :$SSH_PORT or sport = :$VNC_PORT )" | awk '{print $4}'; }
+vm_alive() { [ -n "$VM_PID" ] && kill -0 "$VM_PID" 2>/dev/null; }
+before_start() {
+  [ -z "$VM_PID" ] || abort "a VM from this scenario is still running (pid $VM_PID)"
+  [ -z "$(listeners)" ] || abort "ports $SSH_PORT/$VNC_PORT already in use: $(listeners | tr '\n' ' ')"
+}
+# Called right after a background launch: remember OUR qemu (run-qemu.sh execs qemu, so $! is qemu itself).
+launched() {
+  VM_PID=$1; sleep 3
+  vm_alive || { cat "$QLOG"; VM_PID=; abort "qemu did not start"; }
+  [ "$(cat "/proc/$VM_PID/comm")" = qemu-system-x86 ] || abort "pid $VM_PID is not qemu"
+  for _ in 1 2 3 4 5; do [ -n "$(listeners)" ] && break; sleep 1; done
+  local l; l=$(listeners)
+  assert "qemu pid $VM_PID: SSH/VNC listen on loopback only ($(tr '\n' ' ' <<<"$l"))" \
+    sh -c '[ -n "$1" ] && ! printf "%s\n" "$1" | grep -qv "^127\.0\.0\.1:"' _ "$l"
+}
+stop_vm() {
+  vm_alive || { VM_PID=; return 0; }
+  monitor quit 2>/dev/null
+  for _ in $(seq 1 30); do vm_alive || break; sleep 2; done
+  # Still up: terminate only the process this scenario started, after re-checking it is qemu.
+  if vm_alive && [ "$(cat "/proc/$VM_PID/comm" 2>/dev/null)" = qemu-system-x86 ]; then kill "$VM_PID"; fi
+  wait "$VM_PID" 2>/dev/null
+  VM_PID=
+}
+
+# --- launching --------------------------------------------------------------------------------------------
+install_via_ui() {  # drive Calamares Welcome -> Install; rc 0 = success, 1 = installer reported failure, other = harness
   VM_USER=liveuser timeout "${1:-3600}" python3 image/scripts/dev/drive_install.py
 }
 # Single-disk runs use the repo's launcher.
-start_iso() { image/scripts/run-qemu.sh blank-reset >/dev/null; RENDER=$RENDER DISPLAY_MODE=vnc RAM=$VMRAM image/scripts/run-qemu.sh iso "$ISO" > /tmp/torch-qemu.log 2>&1 & }
-start_disk() { RENDER=$RENDER DISPLAY_MODE=vnc RAM=$VMRAM image/scripts/run-qemu.sh disk > /tmp/torch-qemu.log 2>&1 & }
+start_iso() {
+  before_start; image/scripts/run-qemu.sh blank-reset >/dev/null
+  RENDER=$RENDER DISPLAY_MODE=vnc RAM=$VMRAM image/scripts/run-qemu.sh iso "$ISO" > "$QLOG" 2>&1 &
+  launched $!
+}
+start_disk() {
+  before_start
+  RENDER=$RENDER DISPLAY_MODE=vnc RAM=$VMRAM image/scripts/run-qemu.sh disk > "$QLOG" 2>&1 &
+  launched $!
+}
 # qemu_run <uefi|bios> <vars-file|-> <iso|-> <disk1> [disk2]: the same devices as run-qemu.sh, for multi-disk runs.
 qemu_run() {
   local fw=$1 vars=$2 iso=$3 d1=$4 d2=${5:-} a=() gpu=()
+  before_start
   case $RENDER in
-    blob)  gpu=(-object memory-backend-memfd,id=mem1,size="${VMRAM}M" -machine memory-backend=mem1 -device virtio-gpu-pci,blob=true,hostmem=256M -display none -vnc :1) ;;
-    virgl) gpu=(-device virtio-vga-gl,xres=1280,yres=800 -display gtk,gl=on -vnc :1) ;;
-    *)     gpu=(-device virtio-gpu-pci -display none -vnc :1) ;;
+    blob)  gpu=(-object memory-backend-memfd,id=mem1,size="${VMRAM}M" -machine memory-backend=mem1 -device virtio-gpu-pci,blob=true,hostmem=256M -display none) ;;
+    virgl) gpu=(-device virtio-vga-gl,xres=1280,yres=800 -display gtk,gl=on) ;;
+    *)     gpu=(-device virtio-gpu-pci -display none) ;;
   esac
   [ "$fw" = uefi ] && a+=(-drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" -drive if=pflash,format=raw,file="$vars")
   a+=(-drive file="$d1",if=virtio,format=qcow2)
   [ -n "$d2" ] && a+=(-drive file="$d2",if=virtio,format=qcow2)
   if [ "$iso" != - ]; then a+=(-drive file="$iso",media=cdrom,readonly=on -boot order=d); else a+=(-boot order=c); fi
   qemu-system-x86_64 -name torchos -enable-kvm -cpu host -smp 2 -m "$VMRAM" \
-    -netdev user,id=net0,hostfwd=tcp::2222-:22 -device virtio-net-pci,netdev=net0 "${gpu[@]}" \
+    -netdev user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 -device virtio-net-pci,netdev=net0 "${gpu[@]}" \
+    -vnc 127.0.0.1:$((VNC_PORT - 5900)) \
     -device qemu-xhci -device usb-tablet -monitor unix:image/vm/monitor.sock,server,nowait \
-    -serial file:image/vm/serial.log "${a[@]}" > /tmp/torch-qemu.log 2>&1 &
+    -serial file:image/vm/serial.log "${a[@]}" > "$QLOG" 2>&1 &
+  launched $!
 }
 fresh_vars() { cp "$OVMF_VARS_TPL" "$1"; }
 overlay() { rm -f "image/vm/$2"; qemu-img create -q -f qcow2 -b "$1" -F qcow2 "image/vm/$2"; }  # overlay <base-name> <new-name>
@@ -66,4 +154,26 @@ overlay() { rm -f "image/vm/$2"; qemu-img create -q -f qcow2 -b "$1" -F qcow2 "i
 relaunch_calamares() {
   live 'sudo pkill -x calamares; sleep 3; sudo mv ~/.cache/calamares/session.log ~/.cache/calamares/session.prev-$(date +%s).log 2>/dev/null; (nohup calamares-launch >/dev/null 2>&1 &); sleep 1'
   wait_calamares
+}
+
+# --- Calamares and disk evidence ------------------------------------------------------------------------------
+# JobQueue (3.4.2) logs `Starting job <name> ( i / n )` for every job it runs, `Skipping non-emergency job <name>`
+# for every job it skips after a failure, and `Starting EMERGENCY JOB <name>` for umount.
+session_log() { live 'cat ~/.cache/calamares/session.log' > "$OUT/$1-session.log"; cat "$OUT/$1-session.log"; }
+started_jobs() { grep -oE 'Starting job .*' <<<"$1"; }
+# Calamares 3.4.2 logs Python jobs by module name, not by pretty_name(): 'Starting job "torchpreflight" ( 1 / 30 )'.
+PREFLIGHT_JOB='"torchpreflight"'
+# The gate ran first, rejected, and every later non-emergency job was skipped (nothing destructive started).
+assert_gate_rejected() {  # <log> <reason ERE>
+  local log=$1 jobs; jobs=$(started_jobs "$log")
+  assert "exactly one job started, and it is the install gate" \
+    sh -c '[ "$(printf "%s\n" "$1" | grep -c .)" = 1 ] && printf "%s\n" "$1" | grep -qF "$2"' _ "$jobs" "$PREFLIGHT_JOB"
+  assert "gate logged the rejection reason /$2/" has "torchpreflight: .*$2" "$log"
+  assert "later jobs (partition first) were skipped" has 'Skipping non-emergency job' "$log"
+  assert "Calamares reported installation failure" has 'onInstallationFailed|Installation failed' "$log"
+}
+# Disk state seen from the live session, for before/after comparison: partition table and geometry, every
+# signature wipefs finds (with offsets), every UUID/label. Read-only: no mounting, no writing.
+disk_state() {  # disk_state <dev>
+  live "sudo sfdisk -d $1 2>&1; echo '-- wipefs'; sudo wipefs -n $1 $1?* 2>&1; echo '-- blkid'; sudo blkid -o export $1 $1?* 2>&1"
 }
