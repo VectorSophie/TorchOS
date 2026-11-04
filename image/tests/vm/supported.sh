@@ -46,8 +46,9 @@ echo "$SESS"
 assert "a local greetd wayland session on tty1 exists for the test user" \
   sh -c 'printf "%s\n" "$1" | grep -E "Service=greetd" | grep -E "Type=wayland" | grep -E "TTY=tty1" | grep -q "Remote=no"' _ "$SESS"
 assert "Hyprland runs as the test user" inst 'pgrep -u "$(id -u)" -x Hyprland >/dev/null'
-inst 'pgrep -u "$(id -u)" -x waybar >/dev/null' ||
-  defect "D1 installed desktop: TorchOS Hyprland config not in effect (no waybar; $(inst 'ls ~/.config/hypr/hyprland.lua 2>/dev/null || echo "no hyprland.lua"'))"
+echo "--- the installed user's desktop is TorchOS's (Hyprland Lua config), not the stock one"
+assert "no live-session module for the installed user" inst 'test ! -e ~/.config/hypr/live.lua && ! pgrep -x calamares'
+assert_torch_desktop inst A2 37
 echo "--- install step record"
 STEPS=$(inst 'cat /var/log/torchos-install-steps.tsv'); printf '%s\n' "$STEPS" | tee "$OUT/A2-install-steps.tsv"
 for s in target-layout remove-live-session kernel-images initramfs-config initramfs package-trust login core-services snapshots; do

@@ -1,10 +1,9 @@
 # Installer verification in QEMU (installation-correctness slice)
 
-**Status (2026-11-04): all four scenarios PASS in real QEMU on native Linux** (supported 63/63, rejected 53/53,
-existing 20/20, failure 19/19), plus the release-ISO smoke test. Report, evidence and limitations:
-`docs/verification/2026-11-04-install-correctness-vm.md`. The slice is still **NOT READY** to release because of
-defect D1 in that report: Hyprland 0.57 ignores TorchOS's hyprlang config, so the live session no longer starts
-Calamares. Until that is fixed, `wait_calamares` records a `DEFECT` line and starts `calamares-launch` over SSH.
+**Status (2026-11-04):** installation correctness verified in QEMU (`docs/verification/2026-11-04-install-correctness-vm.md`);
+the Hyprland 0.57 Lua migration (D1) is verified in `docs/verification/2026-11-04-hyprland-lua-vm.md`. The live
+session must start Calamares by itself: `wait_calamares` only watches for the window. Only `relaunch_calamares`
+(after a test-only edit of the live Calamares config in `rejected.sh`/`failure.sh`) starts it by hand.
 
 A harness failure is not a product failure, and production code should not be bent to suit the harness.
 
@@ -25,11 +24,12 @@ A harness failure is not a product failure, and production code should not be be
 
 | script | what |
 |---|---|
-| `iso-contents.sh` | every git-tracked file under `image/calamares/` is byte-identical in the ISO; image type (DEV/release); trusted repo key |
-| `supported.sh` | A: blank-disk install, independent boot, greetd login, step record, doctor, repo trust (accept/refuse), Snapper + GRUB snapshot menu, linux-lts + fallback initramfs, rollback across a reboot, boot-chain check cost |
+| `iso-contents.sh` | every git-tracked file under `image/calamares/`, `dotfiles/dot_config/` (as `/etc/skel/.config`) and the live `usr/local/bin` scripts is byte-identical in the ISO, no legacy `hyprland.conf`; image type (DEV/release); trusted repo key |
+| `supported.sh` | A: blank-disk install, independent boot, greetd login, installed user's TorchOS desktop (`assert_torch_desktop`), step record, doctor, repo trust (accept/refuse), Snapper + GRUB snapshot menu, linux-lts + fallback initramfs, rollback across a reboot, boot-chain check cost |
 | `rejected.sh` | B1 BIOS, B2 swap, B3 ext4, B4 replace, B5 alongside, B6 encryption: all refused before any disk write |
 | `existing.sh` | D: erase over an existing install with a second data disk that must stay byte-identical; boot the result |
 | `failure.sh` | F: fallback loader with empty NVRAM; C: injected required-step failure stops the install (no rollback) |
+| `desktop.sh` | E: live desktop on the Lua config: Calamares autostarts maximized with no harness help, TorchOS styling/binds/session programs (each once), keyboard shortcuts, config reload, SUPER+I |
 | `rc-smoke.sh` | release ISO (no `DEV_SSH_PUBKEY`): boots, no SSH, doctor, installer reachable by keyboard |
 
 ## Confirmed in the VM (formerly assumptions)

@@ -1,0 +1,4 @@
+-- Your own Hyprland settings. hyprland.lua loads this file last, so anything here overrides TorchOS's defaults, e.g.
+--   hl.config({ general = { gaps_out = 12 } })
+--   hl.bind("SUPER + B", hl.dsp.exec_cmd("firefox"))
+-- TorchOS never overwrites this file. API: /usr/share/hypr/stubs/hl.meta.lua, https://wiki.hypr.land/configuring/
