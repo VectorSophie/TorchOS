@@ -28,11 +28,11 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 
 ## Installer: what it accepts
 
-> **Status: implemented, NOT VERIFIED, NOT READY for release.** Everything in this section has passed only static,
-> unit and simulated container tests (`image/tests/run.sh`). Package compilation succeeded; the ISO build stopped
-> when the build host's disk filled. No ISO built from this change, no VM installation, no independent disk boot
-> and no rollback regression run has been observed. The VM verification still to run, on Linux, is in
-> `image/tests/vm/README.md`.
+> **Status (2026-11-04): VM-VERIFIED, still NOT READY for release.** Built into an ISO from commit 65ca72b and run in
+> QEMU/OVMF on native Linux: supported install, independent boot, rollback, six rejected configurations (BIOS, swap,
+> ext4, replace, alongside, encryption: refused before any disk write), erase with a second data disk left
+> byte-identical, fallback loader, injected required-step failure. Test-key builds, not published.
+> Report: `docs/verification/2026-11-04-install-correctness-vm.md`. Release is blocked by the Hyprland 0.57 defect below.
 
 The one path tested end to end before this change (earlier ISOs): **UEFI firmware, "Erase disk" on one whole disk, GPT, Btrfs (`@ @home @log @cache
 @snapshots`), no encryption, no swap partition (zram instead).** The change is designed to refuse everything
@@ -54,6 +54,10 @@ boot chain the bootloader job wrote (grub.cfg parses and boots `linux` from `@`,
 loaders present, GRUB's own btrfs driver reads every kernel and initramfs completely).
 
 ## Known defects (not fixed)
+- **Hyprland 0.57 (current Arch) ignores TorchOS's hyprlang `hyprland.conf`** (Lua config only): the live ISO no longer
+  starts Calamares, and live and installed desktops get Hyprland's stock config (no waybar, hypridle/lock, keybinds,
+  torch-welcome); `calamares-launch` uses pre-Lua `hyprctl dispatch` syntax. Release-blocking. Found 2026-11-04,
+  see the verification report (D1).
 - `hyprpaper` wallpaper does not render in the VM (DRM/GBM), see CLAUDE.md gotchas.
 - Booted snapshot: `systemd-remount-fs.service` fails (fstab's btrfs options cannot apply to the overlay root).
   Harmless; `torch doctor` expects it and explains the snapshot boot instead.

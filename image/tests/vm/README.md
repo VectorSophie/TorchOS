@@ -1,76 +1,47 @@
 # Installer verification in QEMU (installation-correctness slice)
 
-**Status (2026-11-02): NOT READY.** The installation-correctness change (the `torchpreflight` gate, the
-required/optional step classification in `torch-target-setup`, the boot-chain check `torch-target-verify`) has
-passed only static, unit and simulated container tests. No ISO has been built from it, and nothing below has
-been observed in a VM. The scripts in this directory were written for that verification and have **never been
-executed**: the original Windows/WSL2 host ran out of disk during the ISO build (xorriso, about 73%), and its
-WSL filesystem then went read-only. Expect harness fixes on the first run. A harness failure is not a product
-failure, and production code should not be bent to suit an unreliable harness.
+**Status (2026-11-04): all four scenarios PASS in real QEMU on native Linux** (supported 63/63, rejected 53/53,
+existing 20/20, failure 19/19), plus the release-ISO smoke test. Report, evidence and limitations:
+`docs/verification/2026-11-04-install-correctness-vm.md`. The slice is still **NOT READY** to release because of
+defect D1 in that report: Hyprland 0.57 ignores TorchOS's hyprlang config, so the live session no longer starts
+Calamares. Until that is fixed, `wait_calamares` records a `DEFECT` line and starts `calamares-launch` over SSH.
 
-Not modified by this work: the original WSL worktree (`/root/torch-os`, which holds separate uncommitted LUKS
-experiments) and the repo signing key. The build and tests ran in a separate clone. The key was only *used* there,
-to sign packages locally; gpg may update its own housekeeping files (`random_seed`, trustdb) in that GnuPG home.
-Nothing was published.
+A harness failure is not a product failure, and production code should not be bent to suit the harness.
 
-## Done, with evidence
+## How the scripts decide
 
-| check | result | kind |
-|---|---|---|
-| `bash -n` on `torch-target-setup`, `torch-target-verify`, test scripts | pass | static |
-| shellcheck 0.11.0 `-S warning` on the same | pass (only pre-existing SC2054 false positives in `run-qemu.sh`, QEMU option commas) | static |
-| `python3 -m unittest discover -s image/tests -p 'test_*.py'`: 23 tests (gate logic incl. fake Calamares API, config ordering, packaging) | pass | unit |
-| `image/tests/run.sh`: 25/25 container scenarios (real scripts against a fake target, stubbed disk/boot/systemd tools) | pass | simulated |
-| `image/scripts/build-packages.sh` from this tree (2 CPUs, 3 GiB, `CARGO_BUILD_JOBS=2`): 7 TorchOS packages, repo signed | pass (239 s) | real build |
-| ISO build | **did not finish**: host disk full, not a product failure | real build |
+- Every check is `assert`/`pass`/`fail` (`lib.sh`) and goes to `image/vm/evidence/results.tsv`. A scenario exits 0
+  and prints `<scenario>: PASS` only if no check failed; `DEFECT` lines record known defects outside the scenario.
+- Rejections (`rejected.sh`) are judged by Calamares' job log (the gate is the only job started, every later job is
+  `Skipping non-emergency job`) and by the disk state seen from the live session (sfdisk table, wipefs signatures
+  with offsets, blkid UUIDs), before vs after. `qemu-img compare` is informational.
+- Boots are identified by `boot_id`, kernels by `/usr/lib/modules/$(uname -r)/pkgbase`, the fallback initramfs by
+  the size the kernel reports in `Freeing initrd memory`.
+- Safety: QEMU's SSH forward and VNC listen on 127.0.0.1 only (asserted on every launch); a scenario stops only the
+  QEMU PID it started and refuses to start if ports 2222/5901 are taken.
+- `drive_install.py`: exit 0 = Calamares succeeded, 1 = Calamares reported failure, 3 = no verdict (harness).
+  `TORCH_PARTITION_ACTION` runs a live-session command on the partition page (B4-B6 click with `ydotool`, installed
+  into the live session's RAM overlay: VNC/monitor pointer events never reach Hyprland).
 
-## Outstanding (all NOT TESTED)
+| script | what |
+|---|---|
+| `iso-contents.sh` | every git-tracked file under `image/calamares/` is byte-identical in the ISO; image type (DEV/release); trusted repo key |
+| `supported.sh` | A: blank-disk install, independent boot, greetd login, step record, doctor, repo trust (accept/refuse), Snapper + GRUB snapshot menu, linux-lts + fallback initramfs, rollback across a reboot, boot-chain check cost |
+| `rejected.sh` | B1 BIOS, B2 swap, B3 ext4, B4 replace, B5 alongside, B6 encryption: all refused before any disk write |
+| `existing.sh` | D: erase over an existing install with a second data disk that must stay byte-identical; boot the result |
+| `failure.sh` | F: fallback loader with empty NVRAM; C: injected required-step failure stops the install (no rollback) |
+| `rc-smoke.sh` | release ISO (no `DEV_SSH_PUBKEY`): boots, no SSH, doctor, installer reachable by keyboard |
 
-Run in this order on a native Linux host. Each script prints its evidence and writes screenshots and Calamares
-session logs to `image/vm/evidence/` (ignored by git).
+## Confirmed in the VM (formerly assumptions)
 
-1. **ISO contents:** `iso-contents.sh` proves the gate, step scripts and Calamares config inside the ISO are
-   byte-identical to the tree.
-2. **`supported.sh`, the supported install:**
-   - erase install on a blank UEFI disk; record the **real** `torchpreflight` log line (the GlobalStorage values,
-     below);
-   - boot the disk alone; tuigreet login; `/var/log/torchos-install-steps.tsv` has no FAILED;
-   - `torch doctor`; signed `[torchos]` repo; Snapper config; GRUB snapshot menu;
-   - `linux-lts` and the `linux` fallback initramfs via `grub-reboot`;
-   - checkpoint, change, rollback across a reboot (regression only; the separate snapshot-boot rollback defect
-     is out of scope);
-   - boot-chain verification cost, cold and warm.
-3. **`rejected.sh`:** BIOS (SeaBIOS), plus erase+swap and erase+ext4 (re-enabled in the live config for the test
-   only), plus a best-effort keyboard attempt at "Replace a partition". After each VM stops, `qemu-img compare`
-   against the base disk shows whether anything was written.
-4. **`existing.sh`:** "Erase disk" over an existing installation, with a second data disk that must not change;
-   then boot the result.
-5. **`failure.sh`:**
-   - fallback loader: the installed disk boots with empty firmware variables, which is why a missing NVRAM entry
-     is treated as optional;
-   - a required-step failure injected in the live session: Calamares reports failure, grubcfg/bootloader don't
-     run, and the disk isn't bootable. Nothing written before the failure is restored, and that is expected.
-6. **Not part of any script:** build a release ISO without `DEV_SSH_PUBKEY`, run `iso-contents.sh` on it, and
-   smoke-boot it.
-
-## Assumptions the VM run must confirm
-
-- The gate reads these GlobalStorage values, taken from the Calamares 3.4.2 source, not yet from a live run:
-  - `firmwareType` = `"efi"`, and `/sys/firmware/efi` exists;
-  - `partitionChoices` = `{"install": "erase", "swap": "none"}` (set by `Config::setInstallChoice` /
-    `setSwapChoice` when `partition.conf` is loaded, so present even if the user never touches the page);
-  - `luksPassphrase` = `""` when encryption wasn't chosen;
-  - `defaultFileSystemType` = `"btrfs"`.
-
-  If any of these is different on the real path, the gate rejects the supported install. `supported.sh` prints
-  the logged values.
-- `GlobalStorage["partitions"]` is only filled *after* partitioning (`FillGlobalStorageJob`), so the gate can't
-  check the planned layout. `torch-target-setup` checks the actual layout instead.
-- A failed job makes Calamares skip all later non-emergency jobs (`JobQueue.cpp`); `umount` is emergency and
-  still runs.
-- Shellprocess commands run through `/bin/sh -c`, and `${ROOT}` is the target mount point with `dontChroot: true`.
-- ESP paths: `EFI/TorchOS/grubx64.efi` and `EFI/boot/bootx64.efi`. GRUB paths: `/@/boot/...`. Both were observed
-  on a 2026-09-27 install.
+- GlobalStorage on the supported path: `firmwareType='efi'`, `partitionChoices={'install': 'erase', 'swap': 'none'}`,
+  `defaultFileSystemType='btrfs'`, no passphrase; BIOS gives `firmwareType='bios'`, and replace/alongside/encryption
+  show up as `install: 'replace'|'alongside'` and a set `luksPassphrase`.
+- A failed job makes Calamares skip every later non-emergency job; `umount` still runs as `EMERGENCY JOB`.
+- Calamares 3.4.2 logs Python jobs by module name (`Starting job "torchpreflight" ( 1 / 30 )`), not `pretty_name()`,
+  and on failure its last log line is `completion: failed`.
+- Shellprocess output is only logged on failure; the target's `/var/log/torchos-install.log` (in the `@log` subvolume)
+  always has it.
 
 ## Prerequisites (Linux host)
 
@@ -83,8 +54,9 @@ session logs to `image/vm/evidence/` (ignored by git).
 - **The repo signing key** (GnuPG home `~/.torchos-signing`, fingerprint
   `FD561EDBA8080AA625A935E075870B90E4C34AC8`) is needed by `image/scripts/sign-repo.sh`, and the ISO build refuses
   an unsigned repo. It lives on the old Windows/WSL machine and isn't in git. Either transfer it securely, or, for
-  local verification only, sign with a throwaway key (`TORCHOS_GNUPGHOME`) and ship the matching public key in the
-  test build's keyring. Never publish packages signed with a throwaway key.
+  local verification only, sign with a throwaway key (`TORCHOS_GNUPGHOME`) and, in the working tree only, put its
+  public key in `pkg/torchos/keyring/torchos.gpg` and its fingerprint in `torchos-trusted` (`supported.sh` reads the
+  trusted key from there). Never commit that swap; never publish packages signed with a throwaway key.
 
 ```bash
 image/tests/run.sh                                             # static + unit + 25 container scenarios
@@ -92,10 +64,11 @@ image/scripts/build-packages.sh && image/scripts/sign-repo.sh
 DEV_SSH_PUBKEY=~/.ssh/torchos_vm.pub image/scripts/build-iso.sh   # dev ISO: never distribute
 image/tests/vm/iso-contents.sh
 image/tests/vm/supported.sh && image/tests/vm/rejected.sh && image/tests/vm/existing.sh && image/tests/vm/failure.sh
+image/scripts/build-iso.sh && ISO=<that iso> image/tests/vm/rc-smoke.sh      # release ISO smoke
 ```
 
 ## Cleanup boundaries
 
-The scripts write only under `image/vm/` (qcow2 disks, `.vars`, `evidence/`) and `/tmp/torch-qemu.log`.
+The scripts write only under `image/vm/` (qcow2 disks, `.vars`, `evidence/` including `qemu.log`).
 `image/build/`, `image/out/` and `image/repo/` belong to the build scripts. All of these are gitignored and can be
 deleted freely. Nothing here touches a host disk, the host bootloader, or the signing key's contents.
