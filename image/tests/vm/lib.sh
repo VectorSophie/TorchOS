@@ -202,6 +202,7 @@ assert_torch_desktop() {
   key() { python3 image/scripts/dev/qmon.py keys "$@"; sleep 2; }
   ws() { hj "$who" activeworkspace "d['id']"; }
   ncls() { hj "$who" clients "sum(c['class']=='$1' for c in d)"; }
+  # The VM has two outputs; workspace 2 starts on the second, which VNC screenshots do not show (hyprctl does).
   key meta_l-2; assert "$id: SUPER+2 switches to workspace 2" test "$(ws)" = 2
   before=$(ncls kitty); key meta_l-q; sleep 2
   assert "$id: SUPER+Q opens a kitty terminal" test "$(ncls kitty)" = $((before + 1))

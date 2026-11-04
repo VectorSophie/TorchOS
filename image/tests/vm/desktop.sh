@@ -16,6 +16,12 @@ CAL="sum(c['class']=='io.calamares.calamares' for c in d)"
 MAX="[c['fullscreen'] for c in d if c['class']=='io.calamares.calamares']"
 assert "exactly one Calamares window" test "$(hj live clients "$CAL")" = 1
 assert "Calamares is maximized (fullscreen state 1 = maximized)" test "$(hj live clients "$MAX")" = "[1]"
+# The race seen on the first Lua ISO: a window that maps after Calamares (torch-welcome) un-maximized it, because
+# 0.57 defaults misc:on_focus_under_fullscreen to 2. Force that order instead of relying on boot timing.
+live 'pkill -x torch-welcome; sleep 1; hyprctl dispatch "hl.dsp.exec_cmd(\"torch-welcome\")" >/dev/null'; sleep 6
+assert "torch-welcome reopened after Calamares" test "$(nproc_of live torch-welcome)" = 1
+assert "Calamares stays maximized when a window opens after it" test "$(hj live clients "$MAX")" = "[1]"
+shot E-after-welcome
 assert "live.lua (installer autostart) present for the live user" live 'test -s ~/.config/hypr/live.lua'
 assert_torch_desktop live E 38
 echo "--- installation shortcut"
