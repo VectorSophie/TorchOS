@@ -37,6 +37,7 @@ case "$name $*" in
   "findmnt -no FSTYPE /boot/efi") echo vfat ;;
   "findmnt -no SOURCE /.snapshots") echo "/dev/vda2[/@snapshots]" ;;
   "findmnt -no SOURCE /target") echo "/dev/vda2[/@]" ;;
+  "findmnt -no UUID /target") echo 2f6b1c1e-0d5a-4c3e-9a51-7f0e8d1b2c3a ;;
   "lsblk -nso TYPE /dev/vda2") [ -n "${T_CRYPT:-}" ] && echo crypt; echo part; echo disk ;;
   "lsblk -nso PKNAME /dev/vda2") echo vda; echo ;;
   "lsblk -dno PTTYPE /dev/vda") echo "${T_PTTYPE:-gpt}" ;;
@@ -85,7 +86,7 @@ useradd -m -s /bin/bash tester && echo 'tester:throwaway' | chpasswd
 # ---- verify-step fixture (a mounted target at /target as seen from the live system) -----------------
 verify_fixture() {
   mkdir -p /target/boot/grub /target/boot/efi/EFI/TorchOS /target/boot/efi/EFI/boot /target/etc/mkinitcpio.d /target/var/log
-  printf "menuentry 'TorchOS Linux' {\n\tlinux\t/@/boot/vmlinuz-linux root=UUID=x rw\n}\nsubmenu 'TorchOS snapshots' { configfile \"\${prefix}/grub-btrfs.cfg\" }\n" > /target/boot/grub/grub.cfg
+  printf "menuentry 'TorchOS Linux' {\n\tlinux\t/@/boot/vmlinuz-linux root=UUID=${T_GRUB_ROOT_UUID:-2f6b1c1e-0d5a-4c3e-9a51-7f0e8d1b2c3a} rw rootflags=subvol=@ loglevel=3\n}\nsubmenu 'TorchOS snapshots' { configfile \"\${prefix}/grub-btrfs.cfg\" }\n" > /target/boot/grub/grub.cfg
   echo "submenu '| 2026-11-02 | @snapshots/1/snapshot | single | TorchOS fresh install |' {}" > /target/boot/grub/grub-btrfs.cfg
   echo x > /target/boot/efi/EFI/TorchOS/grubx64.efi; echo x > /target/boot/efi/EFI/boot/bootx64.efi
   touch /target/etc/mkinitcpio.d/linux.preset /target/etc/mkinitcpio.d/linux-lts.preset
@@ -158,10 +159,16 @@ case $SCEN in
     step_is optional "enable bluetooth.service" failed; step_is required snapshots ok
     grep -q "WARN: optional step 'enable bluetooth.service' failed" /tmp/out && ok "warning printed" || bad "no warning" ;;
   verify-ok)
-    verify; expect_exit 0; vstep required "grub.cfg parses (grub-script-check)" ok; vstep optional "firmware boot entry for TorchOS" ok ;;
+    verify; expect_exit 0; vstep required "grub.cfg parses (grub-script-check)" ok
+    vstep required "default entry mounts this root (root=UUID=2f6b1c1e-0d5a-4c3e-9a51-7f0e8d1b2c3a rootflags=subvol=@)" ok
+    vstep optional "firmware boot entry for TorchOS" ok ;;
   verify-grub-reads-short-kernel)   # the rsync -S sparse-tail bug: GRUB reads less than the file
     fail_on "grub-fstest /dev/vda2 cmp /@/boot/vmlinuz-linux "; verify; expect_exit 1
     vstep required "GRUB reads /boot/vmlinuz-linux completely" FAILED ;;
+  verify-wrong-root)   # a kernel line that names another file system must not pass as "boots from @"
+    export T_GRUB_ROOT_UUID=0b8e3f9a-1111-4222-8333-944455556666; verify; expect_exit 1
+    vstep required "grub.cfg boots the linux kernel from @" ok
+    vstep required "default entry mounts this root (root=UUID=2f6b1c1e-0d5a-4c3e-9a51-7f0e8d1b2c3a rootflags=subvol=@)" FAILED ;;
   verify-grub-cfg-invalid)
     fail_on "grub-script-check"; verify; expect_exit 1; vstep required "grub.cfg parses (grub-script-check)" FAILED ;;
   verify-no-fallback-loader)

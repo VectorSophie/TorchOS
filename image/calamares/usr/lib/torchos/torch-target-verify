@@ -30,11 +30,20 @@ cfg_has() { grep -Eq "$1" "$ROOT/boot/grub/grub.cfg"; }
 # GRUB reads the target through its own btrfs driver; compare what it reads with the real file.
 grub_reads() { grub-fstest "$DEV" cmp "/@/boot/$1" "$ROOT/boot/$1"; }
 
+# The default (first) entry must mount THIS file system's @: a kernel line naming another disk's root (e.g. a
+# grub-mkconfig that probed the wrong device) would pass every other check here and still not boot.
+boots_this_root() {
+  [ -n "$UUID" ] && grep -m1 -E '^[[:space:]]*linux[[:space:]]+/@/boot/vmlinuz-linux[[:space:]]' "$CFG" |
+    grep -E "[[:space:]]root=UUID=$UUID([[:space:]]|$)" | grep -qE '[[:space:]]rootflags=subvol=/?@([[:space:],]|$)'
+}
+
 CFG=$ROOT/boot/grub/grub.cfg
 DEV=$(findmnt -no SOURCE "$ROOT" | sed 's/\[.*//')
+UUID=$(findmnt -no UUID "$ROOT")
 required "grub.cfg exists" test -s "$CFG"
 required "grub.cfg parses (grub-script-check)" grub-script-check "$CFG"
 required "grub.cfg boots the linux kernel from @" cfg_has '^[[:space:]]*linux[[:space:]]+/@/boot/vmlinuz-linux[[:space:]]'
+required "default entry mounts this root (root=UUID=$UUID rootflags=subvol=@)" boots_this_root
 required "grub.cfg includes the snapshot menu" cfg_has 'grub-btrfs\.cfg'
 required "snapshot menu lists a snapshot" grep -q '@snapshots/[0-9]*/snapshot' "$ROOT/boot/grub/grub-btrfs.cfg"
 required "EFI loader EFI/TorchOS/grubx64.efi" test -s "$ROOT/boot/efi/EFI/TorchOS/grubx64.efi"

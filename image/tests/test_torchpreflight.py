@@ -6,6 +6,7 @@ encryption was confirmed on the partition page (ChoicePage::onLeave), firmwareTy
 """
 import importlib.util
 import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -25,6 +26,10 @@ SUPPORTED = {
 }
 
 
+BTRFS_ONLY = ["btrfs"]
+SHIPPED_PARTITION_CONF = os.path.join(HERE, "..", "calamares", "etc", "calamares", "modules", "partition.conf")
+
+
 def with_(**changes):
     gs = dict(SUPPORTED)
     for k, v in changes.items():
@@ -37,12 +42,12 @@ def with_(**changes):
 
 class Accepted(unittest.TestCase):
     def test_supported_configuration_passes(self):
-        self.assertEqual(pf.problems(SUPPORTED.get, True), [])
+        self.assertEqual(pf.problems(SUPPORTED.get, True, BTRFS_ONLY), [])
 
 
 class Rejected(unittest.TestCase):
-    def assertRejected(self, gs, efi=True, mentions=""):
-        found = pf.problems(gs.get, efi)
+    def assertRejected(self, gs, efi=True, mentions="", offered=BTRFS_ONLY):
+        found = pf.problems(gs.get, efi, offered)
         self.assertTrue(found, f"expected a rejection for {gs} efi={efi}")
         if mentions:
             self.assertTrue(any(mentions in p for p in found), found)
@@ -79,10 +84,39 @@ class Rejected(unittest.TestCase):
                 self.assertRejected(with_(defaultFileSystemType=fs), mentions="Btrfs")
         self.assertRejected(with_(defaultFileSystemType=None), mentions="Btrfs")
 
+    def test_non_btrfs_offered_with_btrfs_default(self):
+        # The user's pick on the "Erase disk" page never reaches GlobalStorage: defaultFileSystemType stays "btrfs"
+        # even when ext4 is chosen, so offering anything else must be refused by itself.
+        for offered in (["btrfs", "ext4"], ["ext4", "btrfs"], ["ext4"], [], None):
+            with self.subTest(offered=offered):
+                self.assertRejected(SUPPORTED, mentions="Btrfs", offered=offered)
+
     def test_every_problem_is_reported(self):
         gs = {"firmwareType": "bios", "partitionChoices": {"install": "manual", "swap": "small"},
               "luksPassphrase": "x", "defaultFileSystemType": "ext4"}
-        self.assertEqual(len(pf.problems(gs.get, False)), 5)
+        self.assertEqual(len(pf.problems(gs.get, False, ["ext4"])), 5)
+
+
+class OfferedFilesystems(unittest.TestCase):
+    def parse(self, text):
+        with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as f:
+            f.write(text)
+        try:
+            return pf.offered_filesystems(f.name)
+        finally:
+            os.unlink(f.name)
+
+    def test_shipped_partition_conf_offers_btrfs_only(self):
+        self.assertEqual(pf.offered_filesystems(SHIPPED_PARTITION_CONF), ["btrfs"])
+
+    def test_flow_lists(self):
+        self.assertEqual(self.parse('availableFileSystemTypes: [ "btrfs", "ext4" ]\n'), ["btrfs", "ext4"])
+        self.assertEqual(self.parse("availableFileSystemTypes: [btrfs]\n"), ["btrfs"])
+
+    def test_unreadable_or_unparsed_fails_closed(self):
+        self.assertIsNone(pf.offered_filesystems("/nonexistent/partition.conf"))
+        self.assertIsNone(self.parse("defaultFileSystemType: btrfs\n"))
+        self.assertIsNone(self.parse("availableFileSystemTypes:\n  - btrfs\n"))   # block list: not parsed, refused
 
 
 class FakeStorage:
@@ -117,7 +151,8 @@ class FakeCalamares:
 class Run(unittest.TestCase):
     def run_job(self, gs, efi):
         fake = FakeCalamares(gs)
-        with mock.patch.object(pf, "libcalamares", fake), mock.patch.object(pf.os.path, "isdir", return_value=efi):
+        with mock.patch.object(pf, "libcalamares", fake), mock.patch.object(pf.os.path, "isdir", return_value=efi), \
+                mock.patch.object(pf, "PARTITION_CONF", SHIPPED_PARTITION_CONF):
             return pf.run(), fake.log
 
     def test_supported_returns_none(self):

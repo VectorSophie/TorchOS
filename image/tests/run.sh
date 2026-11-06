@@ -32,7 +32,7 @@ SCENARIOS=${*:-supported bios ext4-root wrong-subvolume encrypted-root mbr-table
   initramfs-hook-missed initramfs-hook-noop initramfs-build-fails initramfs-without-overlay-hook
   keyring-populate-fails signing-key-missing greetd-enable-fails no-login-account torchd-enable-fails
   snapper-config-fails first-snapshot-fails optional-service-fails
-  verify-ok verify-grub-reads-short-kernel verify-grub-cfg-invalid verify-no-fallback-loader
+  verify-ok verify-wrong-root verify-grub-reads-short-kernel verify-grub-cfg-invalid verify-no-fallback-loader
   verify-no-snapshot-menu verify-no-nvram-entry}
 passed=0; failed=()
 for s in $SCENARIOS; do
