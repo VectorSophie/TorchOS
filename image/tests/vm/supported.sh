@@ -51,12 +51,16 @@ echo "--- the installed user's desktop is TorchOS's (Hyprland Lua config), not t
 assert "no live-session module for the installed user" inst 'test ! -e ~/.config/hypr/live.lua && ! pgrep -x calamares'
 assert_torch_desktop inst A2 37
 echo "--- local.lua survives TorchOS's chezmoi source (existing user, modified file)"
-# chezmoi is not in the image: installed here for the test from the Arch repos, like a user would.
-isudo 'pacman -Sy --noconfirm --needed chezmoi >/dev/null 2>&1'
+# chezmoi is not in the image: installed here for the test from the Arch repos. A test-key build (correctly) refuses
+# the production-signed hosted [torchos] db, which would abort a plain -Sy, so the install uses a copy of pacman.conf
+# without [torchos]. Every check below depends on chezmoi having really run: no chezmoi, no claims.
+isudo "sh -c 'sed /^.torchos.\$/,/^Server/d /etc/pacman.conf > /tmp/pacman-notorchos.conf; pacman --config /tmp/pacman-notorchos.conf -Sy --noconfirm --needed chezmoi >/dev/null 2>&1'"
+inst 'command -v chezmoi >/dev/null' || abort "A2: chezmoi installed for the local.lua test"
 inst 'echo "hl.config({ decoration = { rounding = 9 } })  -- user override (test)" >> ~/.config/hypr/local.lua; hyprctl reload >/dev/null; sleep 2'
 assert "A2: the user's local.lua override is in effect (rounding 9)" test "$(opt inst decoration:rounding)" = 9
 CZ=$(inst 'chezmoi --source /usr/share/torchos/dotfiles diff 2>&1 | grep -E "^diff --git" ; chezmoi --source /usr/share/torchos/dotfiles apply --force; echo "apply rc=$?"; hyprctl reload >/dev/null; sleep 2'); echo "$CZ"
-assert "A2: chezmoi apply from /usr/share/torchos/dotfiles succeeded" has '^apply rc=0$' "$CZ"
+has '^apply rc=0$' "$CZ" || abort "A2: chezmoi apply from /usr/share/torchos/dotfiles succeeded"
+pass "A2: chezmoi apply from /usr/share/torchos/dotfiles succeeded"
 assert "A2: chezmoi does not even propose a change to local.lua" lacks 'local\.lua' "$CZ"
 assert "A2: local.lua still holds the user's line after chezmoi apply --force" inst 'grep -q "rounding = 9 } })  -- user override (test)" ~/.config/hypr/local.lua'
 assert "A2: and the override is still in effect after a reload" test "$(opt inst decoration:rounding)" = 9

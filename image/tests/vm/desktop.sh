@@ -62,27 +62,30 @@ BAR
 # Two workspaces on the first output: 1 and 3 (a kitty keeps 3 open), start on 1.
 live 'hyprctl dispatch "hl.dsp.focus({ workspace = 3 })" >/dev/null; hyprctl dispatch "hl.dsp.exec_cmd(\"kitty\")" >/dev/null; sleep 3; hyprctl dispatch "hl.dsp.focus({ workspace = 1 })" >/dev/null; sleep 1'
 assert "start on workspace 1" test "$(live 'bash /tmp/bar.sh ws')" = 1
-bar_round() {  # bar_round <label> <expect: works|broken>
-  local c s1 s2
-  c=$(live 'bash /tmp/bar.sh click 3'); echo "$1 click: $c"
-  s1=$(live 'hyprctl dispatch "hl.dsp.focus({ workspace = 1 })" >/dev/null; bash /tmp/bar.sh scroll 1')
-  s2=$(live 'bash /tmp/bar.sh scroll -1'); echo "$1 scroll: 1 -> $s1 -> $s2"
-  if [ "$2" = works ]; then
-    assert "$1: clicking workspace 3 in waybar switches to it" has '^click at x=[0-9]+ -> workspace 3$' "$c"
-    assert "$1: scrolling on waybar leaves workspace 1, scrolling back returns (1 -> $s1 -> $s2)" \
-      sh -c '[ "$1" != 1 ] && [ "$2" = 1 ]' _ "$s1" "$s2"
-  else
-    assert "$1: clicking waybar does NOT switch workspace (the defect)" has '^no click reached workspace 3' "$c"
-    assert "$1: scrolling on waybar does NOT switch workspace (1 -> $s1 -> $s2)" sh -c '[ "$1" = 1 ] && [ "$2" = 1 ]' _ "$s1" "$s2"
-  fi
-  live 'hyprctl dispatch "hl.dsp.focus({ workspace = 1 })" >/dev/null'
-}
-bar_round "waybar 0.16.0" works
+# Workspace scrolling is opt-in in waybar ("enable-bar-scroll", off by default; TorchOS does not enable it) and does
+# not exist at all in 0.15.0's hyprland/workspaces. Turn it on for the live user (test only) to prove 0.16.0's scroll
+# path works on the Lua IPC too.
+assert "the shipped waybar config does not enable bar scrolling (default off)" \
+  live '! grep -q enable-bar-scroll /etc/skel/.config/waybar/config'
+live 'python3 -c "import json,os; p=os.path.expanduser(\"~/.config/waybar/config\"); c=json.load(open(p)); c.setdefault(\"hyprland/workspaces\", {})[\"enable-bar-scroll\"]=True; json.dump(c, open(p, \"w\"), indent=1)"; pkill -x waybar; sleep 1; hyprctl dispatch "hl.dsp.exec_cmd(\"waybar\")" >/dev/null; sleep 4'
+assert "waybar restarted with bar scrolling enabled (test only)" live 'pgrep -x waybar >/dev/null && grep -q enable-bar-scroll ~/.config/waybar/config'
+c=$(live 'bash /tmp/bar.sh click 3'); echo "waybar 0.16.0 click: $c"
+assert "waybar 0.16.0: clicking workspace 3 in waybar switches to it" has '^click at x=[0-9]+ -> workspace 3$' "$c"
+s1=$(live 'hyprctl dispatch "hl.dsp.focus({ workspace = 1 })" >/dev/null; bash /tmp/bar.sh scroll 1'); s2=$(live 'bash /tmp/bar.sh scroll -1')
+echo "waybar 0.16.0 scroll: 1 -> $s1 -> $s2"
+assert "waybar 0.16.0 (bar scrolling enabled): scrolling leaves workspace 1, scrolling back returns (1 -> $s1 -> $s2)" \
+  sh -c '[ "$1" != 1 ] && [ "$2" = 1 ]' _ "$s1" "$s2"
+live 'hyprctl dispatch "hl.dsp.focus({ workspace = 1 })" >/dev/null'
 shot E-waybar-0.16
-# A/B in the same session (live RAM overlay, test only): the [extra] 0.15.0 build must show the defect.
-live 'sudo pacman -Sw --noconfirm extra/waybar >/dev/null 2>&1; sudo pacman -U --noconfirm /var/cache/pacman/pkg/waybar-0.15.0-*.pkg.tar.zst >/dev/null 2>&1; pkill -x waybar; sleep 1; hyprctl dispatch "hl.dsp.exec_cmd(\"waybar\")" >/dev/null; sleep 4'
-assert "waybar 0.15.0 from [extra] now running" live 'waybar --version | grep -q "0\.15\.0" && pgrep -x waybar >/dev/null'
+# A/B in the same session: [extra]'s 0.15.0 binary, unpacked to /tmp and run directly. Installing it is refused, and
+# must be: torch-config requires waybar>=0.16.0.
+assert "pacman refuses to put waybar 0.15.0 under torch-config (waybar>=0.16.0)" \
+  live '! sudo pacman -S --noconfirm extra/waybar >/dev/null 2>&1 && waybar --version | grep -q "0\.16\.0"'
+live 'sudo pacman -Swdd --noconfirm extra/waybar >/dev/null 2>&1; rm -rf /tmp/wb15; mkdir /tmp/wb15 && bsdtar -xf /var/cache/pacman/pkg/waybar-0.15.0-*-x86_64.pkg.tar.zst -C /tmp/wb15; pkill -x waybar; sleep 1; hyprctl dispatch "hl.dsp.exec_cmd(\"/tmp/wb15/usr/bin/waybar\")" >/dev/null; sleep 4'
+assert "waybar 0.15.0 ([extra], unpacked to /tmp) is the running bar" \
+  live '/tmp/wb15/usr/bin/waybar --version | grep -q "0\.15\.0" && pgrep -f "^/tmp/wb15/usr/bin/waybar" >/dev/null'
 assert "Hyprland 0.57 refuses hyprlang IPC dispatch (what 0.15.0 sends)" \
   has 'your syntax might need to be updated' "$(live 'hyprctl dispatch workspace 3; echo')"
-bar_round "waybar 0.15.0" broken
+c=$(live 'bash /tmp/bar.sh click 3'); echo "waybar 0.15.0 click: $c"
+assert "waybar 0.15.0: clicking waybar does NOT switch workspace (the defect, reproduced)" has '^no click reached workspace 3' "$c"
 finish
