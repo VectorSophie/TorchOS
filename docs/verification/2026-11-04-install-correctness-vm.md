@@ -192,3 +192,32 @@ env -u DEV_SSH_PUBKEY image/scripts/build-iso.sh                     # renamed t
 image/tests/vm/iso-contents.sh image/out/torchos-RC-TESTKEY-2026.11.04-x86_64.iso
 ISO=image/out/torchos-RC-TESTKEY-2026.11.04-x86_64.iso image/tests/vm/rc-smoke.sh
 ```
+
+## Addendum 2026-11-06: re-verification of the review fixes (PR #1 head 0333016)
+
+Independent review (PR #1) found two defects and fixed them in 799104c; 0333016 adds VM checks for both and a
+random container-fixture password. This run re-verifies the **current head**, not the earlier commit.
+
+| item | value |
+|---|---|
+| ISO | `torchos-DEV-TESTKEY-PR1-0333016-2026.11.06-x86_64.iso`, sha256 `b11a1af5e26fdc5c0864fd13a0aa9393a9f7b195b95aa9aaa9dccf465b71cd24`, built from 0333016 (clean tree + working-tree-only keyring swap, reverted) |
+| signing | isolated TEST key `1177FDE3…A4EC` (same as 2026-11-04). The production key `FD561EDB…4AC8` was not used. Not publishable |
+| dev SSH | new disposable key generated for this build (`SHA256:L8uorujH…`); the 2026-11-04 key was not used |
+| reused | AUR builds calamares 3.4.2-2 and wlogout 1.2.2-0 from 2026-11-04 (unchanged recipes; sha256 in the provenance file). Every torch-* package was rebuilt from 0333016 |
+| ISO contents | `iso-contents.sh`: 17/17 files under `image/calamares/` byte-identical |
+
+Results: **supported 67 PASS / 0 FAIL**, **rejected 62 PASS / 0 FAIL** (B1–B7), plus 4 DEFECT lines (D1).
+
+- **Fix 1, file systems offered (B7):** with the default still Btrfs and ext4 also offered, the gate logged
+  `defaultFileSystemType='btrfs' offered=['btrfs', 'ext4']` and refused with exactly one reason. It was the only job
+  started; every later non-emergency job (partition first) was skipped, and the disk's table, signatures and UUIDs
+  were unchanged. The supported install logged `offered=['btrfs']` and was accepted.
+- **Fix 2, boot-chain root (A6):** on the installed system, the real default entry is
+  `linux /@/boot/vmlinuz-linux root=UUID=00d27000-… rw rootflags=subvol=@ …`. Replacing the UUID → verify rc 1,
+  exactly one failed check (the new root check). Replacing the subvolume with `@home` → rc 1, same single check.
+  grub.cfg restored byte-identically → rc 0, no failed check.
+- **D1 is a test accommodation here, not evidence of a working live desktop.** Hyprland 0.57.1 ignored this
+  branch's hyprlang config, so the harness started Calamares over SSH (`DEFECT D1 … harness launches calamares-launch`),
+  and the installed desktop ran Hyprland's stock config. The fix is PR #2.
+- Static: `image/tests/run.sh` with ShellCheck 0.9.0 (previously skipped: not installed): 27 unit tests, 26 container
+  scenarios, both installer scripts ShellCheck-clean at warning level.
