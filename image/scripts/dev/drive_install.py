@@ -24,7 +24,7 @@ def ctrl_a():
     s.close()
 
 
-live("hyprctl dispatch focuswindow class:io.calamares.calamares")
+live("""hyprctl dispatch 'hl.dsp.focus({ window = "class:io.calamares.calamares" })'""")
 for _ in range(3):                       # welcome -> location -> keyboard -> partitions (erase disk is default)
     qmon.keys("alt-n", hold=200); time.sleep(3)
 if os.environ.get("TORCH_PARTITION_ACTION"):

@@ -30,6 +30,11 @@ fi
   sed 's/#.*//' packages/aur.txt
   echo qemu-guest-agent spice-vdagent terminus-font
 } | tr -s ' \n' '\n' | grep -v '^$' | sort -u > "$P/packages.x86_64"
+# pacman takes a bare name from the FIRST repo that has it ([extra]); pinned rebuilds must come from ours.
+for p in $(sed 's/#.*//' packages/arch-pinned.txt | awk 'NF == 3 {print $1}'); do
+  sed -i "s|^$p\$|torchos/$p|" "$P/packages.x86_64"
+  grep -qx "torchos/$p" "$P/packages.x86_64" || { echo "pinned $p is not in the package list" >&2; exit 1; }
+done
 
 # Build-time pacman.conf: official repos + our local repo (signed by sign-repo.sh; its key is trusted below).
 cp pkg/torchos/keyring/torchos.gpg "$P/torchos.gpg"

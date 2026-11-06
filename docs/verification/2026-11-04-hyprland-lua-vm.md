@@ -1,0 +1,180 @@
+# Hyprland 0.57 Lua migration (D1): verification in QEMU (2026-11-04)
+
+Branch `fix/torchos-hyprland-lua`, based on the verified installation-correctness tip `ecdd1e2`. Same host, harness
+rules and test-key signing arrangement as `2026-11-04-install-correctness-vm.md` (test key `1177FDE3…A4EC`,
+unpublished artifacts, keyring swap never committed). Hyprland 0.57.1, Arch repos as of 2026-11-04.
+
+## Root cause
+
+Hyprland 0.57 removed the hyprlang config format: it reads only `~/.config/hypr/hyprland.lua`, and if that is
+missing it writes a stock one and uses it. Even an explicit `-c hyprland.conf` is parsed as Lua. TorchOS shipped
+`hyprland.conf`, `bindings.conf` and `conf.d/*.conf` (live: `conf.d/live.conf` with the Calamares autostart). All of it
+was silently ignored, so the live ISO had no installer autostart and no TorchOS desktop on either live or installed
+systems. `hyprctl dispatch` also takes Lua expressions now (`hyprctl dispatch 'hl.dsp.exit()'`), which broke three
+callers outside the compositor config: `hypridle.conf` (screen off/on), the wlogout Logout action and
+`calamares-launch`'s maximize calls.
+
+## Change
+
+| file | what |
+|---|---|
+| `dotfiles/dot_config/hypr/hyprland.lua` | entry point: same monitor, input, gaps, borders (`#ff4500`/`#2b0a00`), rounding, dwindle, binds; autostart in `hl.on("hyprland.start")` (the old `exec-once`: once per start, not on reload); then optional `live` and `local` modules |
+| `bindings.lua` | the old `bindings.conf` (screenshots, clipboard, power menu, media keys `locked`, arrow focus) |
+| `local.lua` | user overrides, loaded last, never overwritten; replaces `conf.d/*.conf`. A missing file is ignored, an error in it is reported like any config error. No directory scan |
+| `image/archiso/.../torch-live-setup` | writes `live.lua`: Calamares autostart, SUPER+I, a `maximize` window rule, and `misc.on_focus_under_fullscreen = 0` (live only) |
+| `image/archiso/.../calamares-launch` | the `hyprctl` polling loop is gone; the window rule maximizes |
+| `hypridle.conf`, `wlogout/layout` | `hyprctl dispatch` in Lua form. These files keep their own (hyprlang) format |
+| legacy | `hyprland.conf`, `bindings.conf`, `conf.d/00-local.conf` removed |
+
+Duplicate-start check: the only XDG autostart entry (`torch-welcome.desktop`) is inert under Hyprland
+(`xdg-desktop-autostart.target` inactive), and no systemd user unit starts waybar, mako, hypridle, hyprpaper or
+swayosd. The process counts below confirm it.
+
+Not touched: installer safety logic, file-system layout, kernel config, signing policy, recovery, visual design.
+
+## Tests added
+
+- `image/tests/test_hyprland_config.py` (7 unit tests, part of `run.sh`):
+  - no `hyprland.conf`/`bindings.conf`/`conf.d` and no hyprlang keywords (`exec-once`, `bind`, `source`, …) in shipped files;
+  - every `hyprctl dispatch` uses Lua;
+  - the live module starts the installer;
+  - the optional modules load last.
+
+  Each one was checked to fail on a reintroduced legacy file, line or dispatch.
+- `image/tests/hyprland-config-scenario.sh` (in `run.sh`): the **real** Hyprland of the current repos runs
+  `Hyprland --verify-config` on the installed-user and live-user layouts. It catches unknown options, wrong dispatcher
+  arguments, unknown rule fields and Lua errors (each confirmed by a probe).
+- VM:
+  - `image/tests/vm/desktop.sh` (new, live session);
+  - `assert_torch_desktop` in `lib.sh`, also run for the installed user in `supported.sh` after the greeter login;
+  - `wait_calamares` no longer starts Calamares: the live session must;
+  - `iso-contents.sh` also compares all of `/etc/skel/.config` and the live scripts, and fails on a legacy `hyprland.conf`.
+
+## Results
+
+Static and simulated (final tree): `bash -n`, shellcheck, **30** unit tests, the real Hyprland `--verify-config`
+(installed + live: `config ok`), 25/25 container scenarios: all pass.
+
+Real QEMU, dev ISO `torchos-DEV-LUA2-2026.11.04-x86_64.iso`, sha256
+`0c685057bb785eb2c78b49686f6a7e67b0c0263a6234c8ff9d5445822b8077df`. `iso-contents.sh`: 32/32 files identical, no legacy
+config. One VM at a time:
+
+| scenario | result | checks | time |
+|---|---|---|---|
+| `desktop.sh` (live session) | **PASS** | 31/31 | 135 s |
+| `supported.sh` (install + installed desktop) | **PASS** | 85/85 (63 install + 22 desktop) | 688 s |
+| `rejected.sh` | **PASS** | 53/53 | 466 s |
+| `existing.sh` | **PASS** | 20/20 | 284 s |
+| `failure.sh` | **PASS** | 19/19 | 473 s |
+| `rc-smoke.sh` (release ISO, no dev key) | **PASS** | 3/3 + screenshots | 182 s |
+
+Evidence: screenshots, process inspection, `hyprctl` state and keyboard input via the QEMU monitor.
+
+**Live session (`desktop.sh`):**
+- Calamares appears **by itself**, with no SSH or harness launch, maximized (`fullscreen: 1`) over waybar
+  (`E-live-autostart.png`). It stays maximized when torch-welcome is reopened after it.
+- `hyprctl configerrors` is empty, and the loaded `hyprland.lua` is TorchOS's (not autogenerated).
+- Options as configured: border 2, rounding 6, dwindle, borders `ffff4500 0deg` / `ff2b0a00 0deg`.
+- 38 binds; the 5 media keys are `locked`.
+- The waybar layer is mapped. waybar, mako, hypridle, swayosd-server and torch-welcome run exactly once, `wl-paste` twice.
+- Keyboard, via the QEMU monitor:
+  - SUPER+2 switches to workspace 2;
+  - SUPER+Q opens kitty and SUPER+C closes it;
+  - SUPER+1 returns to workspace 1;
+  - SUPER+D opens wofi and Escape closes it.
+- After `hyprctl reload`: no errors, still 38 binds, nothing started twice.
+- SUPER+I relaunches the closed installer, maximized.
+
+**Installed system (`supported.sh`):**
+- The full installation-correctness run passes again (install 176 s, gate values unchanged, rollback, kernels, repo trust).
+- After a real tuigreet login, the same desktop checks pass for the new user: 37 binds (no `live.lua`, no Calamares).
+
+**`rejected`, `existing`, `failure`:** all pass, with Calamares autostarted by the live session.
+
+**DPMS** (`hypridle.conf`): `hl.dsp.dpms({ action = "disable" })` / `"enable"` were confirmed to switch every output
+off and on (`dpmsStatus`). `hyprctl dispatch` answers `ok` even for an unknown action, which silently toggles, so the
+monitor state was checked rather than the reply.
+
+### Found and fixed during verification
+
+On the first Lua ISO (`04c08cf2…`), Calamares sometimes lost its maximized state: when torch-welcome mapped after
+it, Hyprland 0.57's default `misc:on_focus_under_fullscreen = 2` un-maximized it, so it depended on boot timing.
+`live.lua` now sets it to 0 for the live session only. `desktop.sh` reopens torch-welcome after Calamares on purpose,
+so the race is tested deterministically. That ISO's other scenarios (`rejected`, `existing`, `failure`) had already
+passed with the autostarted installer. Its evidence is archived.
+
+## Release-candidate smoke test
+
+`torchos-RC-LUA-TESTKEY-2026.11.04-x86_64.iso`, built without `DEV_SSH_PUBKEY`, sha256
+`471fa456a3ab8f4b99ae5741136b7dff51bd8420f2038b93e83a1c6811b82643` (test-signed: not publishable).
+
+`iso-contents.sh`: image type release, the same 32 files identical, no legacy config. Smoke test, keyboard and screen
+only:
+- nothing answers SSH (asserted);
+- RC-1: Calamares **appears by itself, maximized**, over TorchOS's waybar;
+- RC-2: SUPER+3 and SUPER+Q open a terminal: `torch doctor` all OK and rc 0, `sshd` inactive, no
+  `/etc/torch-dev-build`, `hyprctl configerrors` empty;
+- RC-3: SUPER+1 returns to the maximized installer.
+
+Screenshots: the VM has two virtio-gpu outputs and VNC shows only the first. Workspace 2 starts on the second output,
+so the SUPER+2 terminal screenshots in `desktop.sh`/`supported.sh` show workspace 1. Their assertions use `hyprctl`
+(the active workspace and the new kitty client). A `grim` capture of the second output confirmed the terminal there,
+and the smoke test uses workspace 3, which opens on the first output.
+
+## Known and unchanged
+
+- hyprpaper still crashes in this VM (GBM buffer allocation; the VM-only DRM issue in CLAUDE.md), recorded as a
+  `DEFECT` line, not a config problem. The wallpaper path and format are unchanged.
+- Hyprland 0.57's own warnings are not TorchOS's: none appeared (`configerrors` empty).
+
+## Existing installations (limitation)
+
+`/etc/skel` reaches only accounts created after `torch-config` is updated; nothing migrates an existing home. The
+manual procedure in `docs/upgrade-hyprland-lua.md` (preview with `diff`, back up `~/.config/hypr` and
+`~/.config/wlogout`, install the Lua files, keep `local.lua`, translate personal `conf.d` lines, `--verify-config`) was
+run in a container against a home holding the old config plus an autogenerated `hyprland.lua`. Both backups were
+kept and the result verified (`config ok`). It was not run on a real pre-existing installation in a VM.
+
+## Recommendation
+
+**READY TO REVIEW** (the D1 compatibility fix). Fresh live ISO and fresh installation: TorchOS's Lua config loads with
+no errors and its styling, binds and session programs work. Calamares starts by itself, and the installation-correctness
+matrix still passes: 208 PASS, 0 FAIL across the five scenarios, plus the release smoke test.
+
+TorchOS itself is not release-ready on this evidence alone:
+- the builds are test-signed;
+- existing installations need the manual step in `docs/upgrade-hyprland-lua.md`;
+- nothing has run on real hardware.
+
+## Addendum 2026-11-06: review fixes, waybar 0.16.0 (PR #2)
+
+| item | value |
+|---|---|
+| ISO | `torchos-DEV-TESTKEY-PR2-fdb1578-2026.11.06-x86_64.iso`, sha256 `62ec65a087f52ba46cffcc9e3b2ad3786ff28211c7e8878cd6ac104332180911`, built from fdb1578. Later commits up to this addendum change only tests and docs; `iso-contents.sh` at c3d11b4: 32/32 shipped files identical |
+| signing / SSH | isolated TEST key `1177FDE3…A4EC`; new disposable dev SSH key. Not publishable |
+| waybar | `waybar-0.16.0-1` built from Arch's unmodified recipe at packaging commit `59083bae` (`packages/arch-pinned.txt`), sha256 `3efc4732…7553`; its own test suite passed in the build; installed as `torchos/waybar` |
+
+Results (run 2, c3d11b4): **desktop 42 PASS / 0 FAIL**, **supported 95 PASS / 0 FAIL**, plus 2 DEFECT lines
+(hyprpaper, the known VM-only GBM crash). The live session started Calamares by itself; the harness did not.
+
+**Waybar workspace buttons**, driven by a real pointer (ydotool/uinput) in the live Hyprland 0.57.1 session:
+- 0.16.0: clicking workspace 3's button switches to workspace 3.
+- Scrolling: `hyprland/workspaces` scrolls only with `"enable-bar-scroll": true`, which is off by default. TorchOS
+  doesn't enable it (asserted), and 0.15.0's module has no scroll code at all, so the shipped bar was never
+  affected. With the option turned on for the live user (test only), 0.16.0 scrolls 1 → 3 → 1.
+- A/B, same session: pacman refuses to install `[extra]`'s 0.15.0 under `torch-config` (`waybar>=0.16.0`). The
+  0.15.0 binary, unpacked and run directly, shows the defect: the same clicks leave workspace 1. Hyprland answers its
+  `dispatch workspace 3` with "your syntax might need to be updated".
+
+**local.lua and chezmoi**, on the installed system with an existing user's modified file:
+`decoration.rounding = 9` added to `local.lua` takes effect. chezmoi 2.74 (installed for the test) then runs
+`chezmoi --source /usr/share/torchos/dotfiles diff` (no change proposed to local.lua) and `apply --force` (rc 0).
+local.lua still holds the line, the override is still in effect after a reload, and hyprland.lua is still TorchOS's.
+
+**Run 1 (fdb1578 tests) failed 4 checks, all harness errors, fixed in c3d11b4:** the 0.15.0 downgrade was refused
+by the new dependency (correctly), so the "broken" round ran 0.16.0. The scroll expectation ignored
+`enable-bar-scroll`. chezmoi was never installed (a test-key build refuses the hosted `[torchos]` db, which aborted
+`pacman -Sy`), so the local.lua checks after it passed vacuously; they now abort the scenario instead.
+
+Static: `image/tests/run.sh` with ShellCheck 0.9.0: 36 unit tests, Hyprland 0.57.1 `--verify-config` (installed +
+live), 26 container scenarios. `scripts/check-manifests.sh`: all entries resolve.

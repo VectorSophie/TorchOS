@@ -32,7 +32,7 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 > QEMU/OVMF on native Linux: supported install, independent boot, rollback, six rejected configurations (BIOS, swap,
 > ext4, replace, alongside, encryption: refused before any disk write), erase with a second data disk left
 > byte-identical, fallback loader, injected required-step failure. Test-key builds, not published.
-> Report: `docs/verification/2026-11-04-install-correctness-vm.md`. Release is blocked by the Hyprland 0.57 defect below.
+> Report: `docs/verification/2026-11-04-install-correctness-vm.md`. Release was blocked by the Hyprland 0.57 defect below (fixed on its own branch).
 
 The one path tested end to end before this change (earlier ISOs): **UEFI firmware, "Erase disk" on one whole disk, GPT, Btrfs (`@ @home @log @cache
 @snapshots`), no encryption, no swap partition (zram instead).** The change is designed to refuse everything
@@ -54,10 +54,14 @@ boot chain the bootloader job wrote (grub.cfg parses and its default entry boots
 loaders present, GRUB's own btrfs driver reads every kernel and initramfs completely).
 
 ## Known defects (not fixed)
-- **Hyprland 0.57 (current Arch) ignores TorchOS's hyprlang `hyprland.conf`** (Lua config only): the live ISO no longer
-  starts Calamares, and live and installed desktops get Hyprland's stock config (no waybar, hypridle/lock, keybinds,
-  torch-welcome); `calamares-launch` uses pre-Lua `hyprctl dispatch` syntax. Release-blocking. Found 2026-11-04,
-  see the verification report (D1).
+- *(fixed on `fix/torchos-hyprland-lua`, 2026-11-04)* Hyprland 0.57 ignored the hyprlang `hyprland.conf` (D1). The
+  config is now Lua (`dotfiles/dot_config/hypr/hyprland.lua`), verified in QEMU (`docs/verification/2026-11-04-hyprland-lua-vm.md`).
+  Accounts created before the change are not migrated automatically: `docs/upgrade-hyprland-lua.md`.
+- *(fixed, 2026-11-06)* Clicking or scrolling waybar's workspace buttons did nothing on Hyprland 0.57: waybar 0.15.0
+  sent hyprlang IPC (`dispatch workspace N`), which 0.57 evaluates as Lua. Fixed upstream in waybar 0.16.0 (PR #5013).
+  Until Arch's `[extra]` has it, TorchOS ships Arch's unmodified 0.16.0-1 recipe from `packages/arch-pinned.txt`, and
+  `torch-config` requires `waybar>=0.16.0`. Remove the pin once `[extra]` has 0.16.0. Verified in QEMU: see
+  `docs/verification/2026-11-04-hyprland-lua-vm.md`, 2026-11-06 addendum.
 - `hyprpaper` wallpaper does not render in the VM (DRM/GBM), see CLAUDE.md gotchas.
 - Booted snapshot: `systemd-remount-fs.service` fails (fstab's btrfs options cannot apply to the overlay root).
   Harmless; `torch doctor` expects it and explains the snapshot boot instead.

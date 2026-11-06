@@ -1,0 +1,3 @@
+# local.lua belongs to the user (hyprland.lua loads it last). `chezmoi apply` from this source must never replace it;
+# new accounts get the commented template from /etc/skel instead.
+.config/hypr/local.lua

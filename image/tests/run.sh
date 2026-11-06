@@ -12,7 +12,7 @@ fail=0
 if [ $# -eq 0 ]; then
   echo "== static: bash -n"
   for f in image/calamares/usr/lib/torchos/torch-target-setup image/calamares/usr/lib/torchos/torch-target-verify \
-           image/tests/install-steps-scenario.sh image/tests/vm/*.sh; do
+           image/tests/install-steps-scenario.sh image/tests/hyprland-config-scenario.sh image/tests/vm/*.sh; do
     bash -n "$f" || fail=1
   done
   if command -v shellcheck >/dev/null; then
@@ -22,8 +22,10 @@ if [ $# -eq 0 ]; then
   else
     echo "== static: shellcheck not installed, skipped"
   fi
-  echo "== unit: config + install gate"
+  echo "== unit: config + install gate + Hyprland config"
   python3 -m unittest discover -s image/tests -p 'test_*.py' || fail=1
+  echo "== hyprland: real Hyprland --verify-config on the shipped Lua config (installed + live user)"
+  docker run --rm -v "$PWD:/src:ro" archlinux:base-devel bash /src/image/tests/hyprland-config-scenario.sh || fail=1
 fi
 
 SCENARIOS=${*:-supported bios ext4-root wrong-subvolume encrypted-root mbr-table kernel-missing

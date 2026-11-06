@@ -47,8 +47,24 @@ echo "$SESS"
 assert "a local greetd wayland session on tty1 exists for the test user" \
   sh -c 'printf "%s\n" "$1" | grep -E "Service=greetd" | grep -E "Type=wayland" | grep -E "TTY=tty1" | grep -q "Remote=no"' _ "$SESS"
 assert "Hyprland runs as the test user" inst 'pgrep -u "$(id -u)" -x Hyprland >/dev/null'
-inst 'pgrep -u "$(id -u)" -x waybar >/dev/null' ||
-  defect "D1 installed desktop: TorchOS Hyprland config not in effect (no waybar; $(inst 'ls ~/.config/hypr/hyprland.lua 2>/dev/null || echo "no hyprland.lua"'))"
+echo "--- the installed user's desktop is TorchOS's (Hyprland Lua config), not the stock one"
+assert "no live-session module for the installed user" inst 'test ! -e ~/.config/hypr/live.lua && ! pgrep -x calamares'
+assert_torch_desktop inst A2 37
+echo "--- local.lua survives TorchOS's chezmoi source (existing user, modified file)"
+# chezmoi is not in the image: installed here for the test from the Arch repos. A test-key build (correctly) refuses
+# the production-signed hosted [torchos] db, which would abort a plain -Sy, so the install uses a copy of pacman.conf
+# without [torchos]. Every check below depends on chezmoi having really run: no chezmoi, no claims.
+isudo "sh -c 'sed /^.torchos.\$/,/^Server/d /etc/pacman.conf > /tmp/pacman-notorchos.conf; pacman --config /tmp/pacman-notorchos.conf -Sy --noconfirm --needed chezmoi >/dev/null 2>&1'"
+inst 'command -v chezmoi >/dev/null' || abort "A2: chezmoi installed for the local.lua test"
+inst 'echo "hl.config({ decoration = { rounding = 9 } })  -- user override (test)" >> ~/.config/hypr/local.lua; hyprctl reload >/dev/null; sleep 2'
+assert "A2: the user's local.lua override is in effect (rounding 9)" test "$(opt inst decoration:rounding)" = 9
+CZ=$(inst 'chezmoi --source /usr/share/torchos/dotfiles diff 2>&1 | grep -E "^diff --git" ; chezmoi --source /usr/share/torchos/dotfiles apply --force; echo "apply rc=$?"; hyprctl reload >/dev/null; sleep 2'); echo "$CZ"
+has '^apply rc=0$' "$CZ" || abort "A2: chezmoi apply from /usr/share/torchos/dotfiles succeeded"
+pass "A2: chezmoi apply from /usr/share/torchos/dotfiles succeeded"
+assert "A2: chezmoi does not even propose a change to local.lua" lacks 'local\.lua' "$CZ"
+assert "A2: local.lua still holds the user's line after chezmoi apply --force" inst 'grep -q "rounding = 9 } })  -- user override (test)" ~/.config/hypr/local.lua'
+assert "A2: and the override is still in effect after a reload" test "$(opt inst decoration:rounding)" = 9
+assert "A2: hyprland.lua is still TorchOS's (chezmoi-managed, unchanged)" inst 'head -1 ~/.config/hypr/hyprland.lua | grep -q "TorchOS Hyprland configuration"'
 echo "--- install step record"
 STEPS=$(inst 'cat /var/log/torchos-install-steps.tsv'); printf '%s\n' "$STEPS" | tee "$OUT/A2-install-steps.tsv"
 for s in target-layout remove-live-session kernel-images initramfs-config initramfs package-trust login core-services snapshots; do

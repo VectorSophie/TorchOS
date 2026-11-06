@@ -1,12 +1,16 @@
 #!/usr/bin/bash
-# Live-session bootstrap: home dir, live-only Hyprland snippet with the installer launcher.
+# Live-session bootstrap: home dir, live-only Hyprland module with the installer launcher.
 set -eu
 H=/home/liveuser
 [ -d $H/.config ] || { mkdir -p $H; cp -a /etc/skel/. $H/; }
-mkdir -p $H/.config/hypr/conf.d $H/Desktop
-cat > $H/.config/hypr/conf.d/live.conf <<'CONF'
-# live session only
-exec-once = sleep 3 && calamares-launch
-bind = SUPER, I, exec, calamares-launch
-CONF
+mkdir -p $H/.config/hypr $H/Desktop
+# Loaded last by hyprland.lua (see its optional modules); the installed system never has this file.
+cat > $H/.config/hypr/live.lua <<'LUA'
+-- Live session only: start the installer, maximized (Hyprland would tile it half-width and clip its pages).
+hl.on("hyprland.start", function() hl.exec_cmd("sleep 3 && calamares-launch") end)
+hl.bind("SUPER + I", hl.dsp.exec_cmd("calamares-launch"))
+-- A window that opens later (torch-welcome) must not un-maximize it: 0.57 defaults this to 2 (unmaximize).
+hl.config({ misc = { on_focus_under_fullscreen = 0 } })
+hl.window_rule({ name = "torchos-installer", match = { class = "^io\\.calamares\\.calamares$" }, maximize = true })
+LUA
 chown -R liveuser:liveuser $H

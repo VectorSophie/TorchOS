@@ -39,7 +39,8 @@ package_torch-welcome() {
 
 package_torch-config() {
   pkgdesc="TorchOS default Hyprland/Waybar/Wofi session configuration (new-user skeleton)"
-  depends=(hyprland waybar wofi wlogout hypridle hyprlock hyprpaper mako greetd greetd-tuigreet)
+  # waybar >= 0.16.0: first release whose hyprland/workspaces speaks Hyprland 0.57's Lua dispatch (Waybar #5013).
+  depends=(hyprland 'waybar>=0.16.0' wofi wlogout hypridle hyprlock hyprpaper mako greetd greetd-tuigreet)
   install -d "$pkgdir/etc/skel"
   cp -a "$srcdir/src/dotfiles/dot_config" "$pkgdir/etc/skel/.config"
   # chezmoi-shaped source also ships for `chezmoi init --source`.
