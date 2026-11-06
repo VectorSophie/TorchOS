@@ -81,7 +81,7 @@ printf 'hooks/\nhooks/archiso\n' > /boot/initramfs-linux.img    # stale live-ISO
 touch -d 2020-01-01 /boot/initramfs-linux.img
 useradd -m liveuser
 useradd -r -s /usr/bin/nologin greeter
-useradd -m -s /bin/bash tester && echo 'tester:throwaway' | chpasswd
+useradd -m -s /bin/bash tester && echo "tester:$(head -c 18 /dev/urandom | base64)" | chpasswd   # random per run: only needs to be a usable password
 
 # ---- verify-step fixture (a mounted target at /target as seen from the live system) -----------------
 verify_fixture() {
