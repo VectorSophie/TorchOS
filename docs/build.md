@@ -24,5 +24,9 @@ float with Arch's rolling repos, and the AUR recipes are cloned at HEAD. Pinning
 
 ## Tests
 - `cargo test -p torch -p torchd` on any host (the GTK crate needs gtk4 headers; build it in the container/VM).
+- `image/tests/run.sh` - installer regression tests: Calamares config + the `torchpreflight` install gate
+  (Python unittest), and the real `torch-target-setup` / `torch-target-verify` run against a fake target in
+  one disposable `archlinux:base-devel` container per scenario (supported path, every rejected layout,
+  required and optional step failures). Needs docker; touches no host disk. `run.sh <scenario>` runs one.
 - The VM checks used during development: `docs/handoff.md` section 1 lists the journey; the harness is
   `image/scripts/dev/` (read its README first).

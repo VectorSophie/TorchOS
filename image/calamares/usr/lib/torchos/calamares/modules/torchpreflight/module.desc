@@ -1,0 +1,7 @@
+# TorchOS install gate. Runs first in the exec phase, before `partition` writes anything.
+---
+type:       "job"
+name:       "torchpreflight"
+interface:  "python"
+script:     "main.py"
+noconfig:   true
