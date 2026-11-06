@@ -145,3 +145,36 @@ TorchOS itself is not release-ready on this evidence alone:
 - the builds are test-signed;
 - existing installations need the manual step in `docs/upgrade-hyprland-lua.md`;
 - nothing has run on real hardware.
+
+## Addendum 2026-11-06: review fixes, waybar 0.16.0 (PR #2)
+
+| item | value |
+|---|---|
+| ISO | `torchos-DEV-TESTKEY-PR2-fdb1578-2026.11.06-x86_64.iso`, sha256 `62ec65a087f52ba46cffcc9e3b2ad3786ff28211c7e8878cd6ac104332180911`, built from fdb1578. Later commits up to this addendum change only tests and docs; `iso-contents.sh` at c3d11b4: 32/32 shipped files identical |
+| signing / SSH | isolated TEST key `1177FDE3…A4EC`; new disposable dev SSH key. Not publishable |
+| waybar | `waybar-0.16.0-1` built from Arch's unmodified recipe at packaging commit `59083bae` (`packages/arch-pinned.txt`), sha256 `3efc4732…7553`; its own test suite passed in the build; installed as `torchos/waybar` |
+
+Results (run 2, c3d11b4): **desktop 42 PASS / 0 FAIL**, **supported 95 PASS / 0 FAIL**, plus 2 DEFECT lines
+(hyprpaper, the known VM-only GBM crash). The live session started Calamares by itself; the harness did not.
+
+**Waybar workspace buttons**, driven by a real pointer (ydotool/uinput) in the live Hyprland 0.57.1 session:
+- 0.16.0: clicking workspace 3's button switches to workspace 3.
+- Scrolling: `hyprland/workspaces` scrolls only with `"enable-bar-scroll": true`, which is off by default. TorchOS
+  doesn't enable it (asserted), and 0.15.0's module has no scroll code at all, so the shipped bar was never
+  affected. With the option turned on for the live user (test only), 0.16.0 scrolls 1 → 3 → 1.
+- A/B, same session: pacman refuses to install `[extra]`'s 0.15.0 under `torch-config` (`waybar>=0.16.0`). The
+  0.15.0 binary, unpacked and run directly, shows the defect: the same clicks leave workspace 1. Hyprland answers its
+  `dispatch workspace 3` with "your syntax might need to be updated".
+
+**local.lua and chezmoi**, on the installed system with an existing user's modified file:
+`decoration.rounding = 9` added to `local.lua` takes effect. chezmoi 2.74 (installed for the test) then runs
+`chezmoi --source /usr/share/torchos/dotfiles diff` (no change proposed to local.lua) and `apply --force` (rc 0).
+local.lua still holds the line, the override is still in effect after a reload, and hyprland.lua is still TorchOS's.
+
+**Run 1 (fdb1578 tests) failed 4 checks, all harness errors, fixed in c3d11b4:** the 0.15.0 downgrade was refused
+by the new dependency (correctly), so the "broken" round ran 0.16.0. The scroll expectation ignored
+`enable-bar-scroll`. chezmoi was never installed (a test-key build refuses the hosted `[torchos]` db, which aborted
+`pacman -Sy`), so the local.lua checks after it passed vacuously; they now abort the scenario instead.
+
+Static: `image/tests/run.sh` with ShellCheck 0.9.0: 36 unit tests, Hyprland 0.57.1 `--verify-config` (installed +
+live), 26 container scenarios. `scripts/check-manifests.sh`: all entries resolve.
