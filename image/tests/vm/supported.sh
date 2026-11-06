@@ -157,6 +157,22 @@ for c in cold warm; do
   echo "--- $c cache"; grep -E 'CHECK FAILED|boot chain|runtime|CPU time|Memory peak|IO bytes' <<<"$V"
   assert "$c run: boot chain verified, no failed check" sh -c 'printf "%s\n" "$1" | grep -qx "boot chain verified" && ! printf "%s\n" "$1" | grep -q "CHECK FAILED"' _ "$V"
 done
+echo "== A6 boot-chain check refuses a default entry for another root ($(ts))"
+# On the real installed system: break the default (first) entry's root UUID, then its subvolume, run the verifier,
+# restore grub.cfg byte-identically, run it again. Uses /tmp/torch-target-verify from A5 (this working tree).
+inst 'cat > /tmp/a6.sh' <<'A6'
+G=/boot/grub/grub.cfg; U=$(findmnt -no UUID /); cp -a $G /root/grub.cfg.orig
+run() { /tmp/torch-target-verify / > /tmp/v.out 2>&1; echo "$1 rc=$? root_check_failed=$(grep -c 'CHECK FAILED: default entry mounts this root' /tmp/v.out) failed=$(grep -c 'CHECK FAILED' /tmp/v.out)"; }
+echo "uuid=$U default: $(grep -m1 -E '^[[:space:]]*linux[[:space:]]+/@/boot/vmlinuz-linux' $G)"
+sed -i "0,/root=UUID=$U/s//root=UUID=00000000-0000-4000-8000-000000000000/" $G; run wrong-uuid
+cp -a /root/grub.cfg.orig $G; sed -i '0,/rootflags=subvol=@ /s//rootflags=subvol=@home /' $G; run wrong-subvol
+cp -a /root/grub.cfg.orig $G; cmp -s /root/grub.cfg.orig $G && echo restored=yes; run restored; sync
+A6
+A6OUT=$(isudo 'bash /tmp/a6.sh'); echo "$A6OUT" | tee "$OUT/A6-verify-negative.txt"
+assert "A6: wrong root UUID in the default entry fails exactly the root check" has '^wrong-uuid rc=1 root_check_failed=1 failed=1$' "$A6OUT"
+assert "A6: wrong subvolume in the default entry fails exactly the root check" has '^wrong-subvol rc=1 root_check_failed=1 failed=1$' "$A6OUT"
+assert "A6: grub.cfg restored byte-identically and verifies again" \
+  sh -c 'printf "%s\n" "$1" | grep -qx "restored=yes" && printf "%s\n" "$1" | grep -qx "restored rc=0 root_check_failed=0 failed=0"' _ "$A6OUT"
 inst 'sync'; stop_vm
 mv "$BLANK" image/vm/A-installed.qcow2 && echo "kept image/vm/A-installed.qcow2 for the other scenarios"
 echo "install took $T_INSTALL s"

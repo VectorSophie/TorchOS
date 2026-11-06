@@ -2,7 +2,8 @@
 # B. Rejections on a disk holding an existing installation (overlay of image/vm/A-installed.qcow2 from supported.sh).
 #  B1 BIOS boot (real SeaBIOS)            B2 erase + swap partition     B3 erase + ext4
 #  B4 "Replace a partition" (vda2)        B5 "Install alongside" (vda2) B6 erase + "Encrypt system"
-#  B2/B3/B6 re-enable the option in the LIVE session's partition.conf (test only), proving the gate itself rejects
+#  B7 erase, default btrfs, ext4 also offered
+#  B2/B3/B6/B7 re-enable the option in the LIVE session's partition.conf (test only), proving the gate itself rejects
 #  them even if the configuration ever offers them again. B4/B5 are offered by Calamares on any disk that holds an OS.
 #  B4-B6 need a mouse click on the partition page: VNC/monitor pointer events never reach Hyprland, so ydotool
 #  (uinput) is installed into the live session's RAM overlay for the test. Manual partitioning is not driven.
@@ -77,5 +78,12 @@ live 'sudo sed -i "s/^initialPartitioningChoice:.*/initialPartitioningChoice: er
 relaunch_calamares || abort "B6 Calamares relaunched"
 TORCH_PARTITION_ACTION='bash /tmp/click.sh 206 204 && export YDOTOOL_SOCKET=/tmp/.ydotool_socket && sudo -E ydotool key 15:1 15:0 && sudo -E ydotool type luks-test-only && sudo -E ydotool key 15:1 15:0 && sudo -E ydotool type luks-test-only && sleep 1' \
   reject_case B6 "Disk encryption is not supported"
+# B7: the default stays Btrfs but ext4 is offered as well. Calamares keeps the user's pick on the Erase page out of
+# GlobalStorage (defaultFileSystemType stays 'btrfs'), so the gate must refuse the offer itself, before any job.
+live 'sudo sed -i "s/^enableLuksAutomatedPartitioning:.*/enableLuksAutomatedPartitioning: false/; s/^availableFileSystemTypes:.*/availableFileSystemTypes: [ \"btrfs\", \"ext4\" ]/" /etc/calamares/modules/partition.conf; grep -E "FileSystem|Luks" /etc/calamares/modules/partition.conf'
+relaunch_calamares || abort "B7 Calamares relaunched"
+reject_case B7 "File system 'btrfs' \\(offered: \\['btrfs', 'ext4'\\]\\)"
+assert "B7: the gate saw the default still 'btrfs' (the offer, not the default, was refused)" \
+  has "defaultFileSystemType='btrfs' offered=\\['btrfs', 'ext4'\\]" "$(cat "$OUT/B7-session.log")"
 stop_vm; echo "B2-B6 qemu-img compare: $(written B2.qcow2)"
 finish
