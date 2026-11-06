@@ -75,6 +75,11 @@ class HyprlandConfig(unittest.TestCase):
         self.assertGreater(last_require, lua.index('hl.on("hyprland.start"'))
         self.assertIn('ipairs({ "live", "local" })', lua)
 
+    def test_chezmoi_never_replaces_local_lua(self):
+        # /usr/share/torchos/dotfiles is a chezmoi source too; `chezmoi apply` would overwrite the user's local.lua.
+        ignore = read(os.path.join(ROOT, "dotfiles", ".chezmoiignore")).splitlines()
+        self.assertIn(".config/hypr/local.lua", ignore)
+
     def test_packaged_as_skeleton(self):
         pkgbuild = read(os.path.join(ROOT, "pkg", "torchos", "PKGBUILD"))
         self.assertIn('cp -a "$srcdir/src/dotfiles/dot_config" "$pkgdir/etc/skel/.config"', pkgbuild)
