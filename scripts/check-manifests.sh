@@ -7,7 +7,7 @@ docker run --rm -v "$PWD/packages:/p:ro" archlinux:base-devel bash -c '
   rc=0
   for f in /p/*.txt; do
     n=$(basename "$f")
-    [[ $n == aur.txt || $n == flatpak.txt ]] && continue
+    [[ $n == aur.txt || $n == flatpak.txt || $n == arch-pinned.txt ]] && continue
     for pkg in $(sed "s/#.*//" "$f"); do
       pacman -Si "$pkg" >/dev/null 2>&1 || { echo "UNRESOLVED in $n: $pkg"; rc=1; }
     done

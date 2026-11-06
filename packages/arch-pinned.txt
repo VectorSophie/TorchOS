@@ -1,0 +1,6 @@
+# Arch packages TorchOS needs before [extra] ships them. Each is Arch's own UNMODIFIED recipe from
+# https://gitlab.archlinux.org/archlinux/packaging/packages/<name> at the pinned commit, built by
+# image/scripts/build-packages.sh into the local `torchos` repo and installed as torchos/<name> by build-iso.sh.
+# Remove a line as soon as [extra] has that version or newer (installed systems then update from [extra] as usual).
+# <name> <pkgver-pkgrel> <packaging commit>
+waybar 0.16.0-1 59083bae21befe4a2e6de62b57918e2bcf670451   # hyprland/workspaces click + scroll on Hyprland 0.57 Lua IPC (Waybar PR #5013); [extra] has 0.15.0-3, [extra-testing] 0.16.0-1 since 2026-11-05

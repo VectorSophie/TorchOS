@@ -80,6 +80,17 @@ class HyprlandConfig(unittest.TestCase):
         ignore = read(os.path.join(ROOT, "dotfiles", ".chezmoiignore")).splitlines()
         self.assertIn(".config/hypr/local.lua", ignore)
 
+    def test_waybar_workspaces_needs_lua_dispatch(self):
+        # Hyprland 0.57 runs every IPC `dispatch X` as hl.dispatch(X); waybar's hyprland/workspaces sends Lua-form
+        # dispatches (clicks, scroll) only from 0.16.0 on (Waybar PR #5013). Older waybar: the bar's buttons do nothing.
+        bar = read(os.path.join(ROOT, "dotfiles", "dot_config", "waybar", "config"))
+        if '"hyprland/workspaces"' not in bar:
+            self.skipTest("bar does not use hyprland/workspaces")
+        pkgbuild = read(os.path.join(ROOT, "pkg", "torchos", "PKGBUILD"))
+        m = re.search(r"'waybar>=([0-9.]+)'", pkgbuild)
+        self.assertIsNotNone(m, "torch-config must require a minimum waybar version")
+        self.assertGreaterEqual(tuple(int(x) for x in m.group(1).split(".")), (0, 16, 0))
+
     def test_packaged_as_skeleton(self):
         pkgbuild = read(os.path.join(ROOT, "pkg", "torchos", "PKGBUILD"))
         self.assertIn('cp -a "$srcdir/src/dotfiles/dot_config" "$pkgdir/etc/skel/.config"', pkgbuild)
