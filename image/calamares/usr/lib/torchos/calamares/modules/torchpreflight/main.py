@@ -10,15 +10,21 @@ Calamares fills GlobalStorage["partitions"] in FillGlobalStorageJob, which runs 
 partition jobs. The show phase does store the choices below beforehand, and a failed job makes the job
 queue skip every later non-emergency job, so a rejection here leaves every disk untouched.
 
+GlobalStorage has no key for the file system picked on the "Erase disk" page (Config::setEraseFsTypeChoice keeps
+it inside the partition module), and defaultFileSystemType is only the configured default. Calamares shows that
+picker whenever partition.conf offers more than one type, so the gate also requires the offer itself to be Btrfs only.
+
 The actual result is re-checked after partitioning by torch-target-setup (check_layout).
 """
 import os
+import re
 
 try:
     import libcalamares
 except ImportError:  # unit tests (image/tests/test_torchpreflight.py)
     libcalamares = None
 
+PARTITION_CONF = "/etc/calamares/modules/partition.conf"
 SUPPORTED = ("UEFI firmware, \"Erase disk\" on one whole disk, Btrfs, no encryption, no swap partition")
 
 
@@ -26,8 +32,19 @@ def pretty_name():
     return "Checking that this installation is supported"
 
 
-def problems(get, efi_firmware):
-    """Reasons this installation must not start. `get(key)` returns a GlobalStorage value or None.
+def offered_filesystems(path=None):
+    """availableFileSystemTypes from partition.conf as a list, or None if it cannot be read (flow-style list only)."""
+    try:
+        with open(path or PARTITION_CONF, encoding="utf-8") as f:
+            m = re.search(r"^availableFileSystemTypes:\s*\[(.*)\]\s*$", f.read(), re.M)
+    except OSError:
+        return None
+    return [t.strip().strip("\"'") for t in m.group(1).split(",") if t.strip()] if m else None
+
+
+def problems(get, efi_firmware, offered_fs):
+    """Reasons this installation must not start. `get(key)` returns a GlobalStorage value or None; `offered_fs` is
+    what the "Erase disk" page lets the user pick (offered_filesystems()).
 
     Fails closed: a missing or unexpected value is a problem, not a pass."""
     found = []
@@ -48,8 +65,9 @@ def problems(get, efi_firmware):
         found.append("Disk encryption is not supported yet: no encrypted installation has been tested to "
                      "boot. Install without encryption.")
     fs = get("defaultFileSystemType")
-    if fs != "btrfs":
-        found.append(f"File system {fs!r} is not supported: snapshots and rollback need Btrfs.")
+    if fs != "btrfs" or offered_fs != ["btrfs"]:
+        found.append(f"File system {fs!r} (offered: {offered_fs!r}) is not supported: snapshots and rollback need "
+                     "Btrfs, and only Btrfs may be offered.")
     return found
 
 
@@ -60,12 +78,13 @@ def run():
         return gs.value(key) if gs.contains(key) else None
 
     efi = os.path.isdir("/sys/firmware/efi")
+    offered = offered_filesystems()
     # Never log the passphrase itself, only whether one was set.
     libcalamares.utils.debug(
         f"torchpreflight: /sys/firmware/efi={efi} firmwareType={get('firmwareType')!r} "
         f"partitionChoices={get('partitionChoices')!r} defaultFileSystemType={get('defaultFileSystemType')!r} "
-        f"encryption={'yes' if get('luksPassphrase') else 'no'}")
-    found = problems(get, efi)
+        f"offered={offered!r} encryption={'yes' if get('luksPassphrase') else 'no'}")
+    found = problems(get, efi, offered)
     if not found:
         libcalamares.utils.debug("torchpreflight: supported configuration")
         return None

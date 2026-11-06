@@ -42,7 +42,7 @@ else before any disk is written:
 - The `torchpreflight` job runs first in the exec phase, before `partition`, and fails the installation, with
   "Nothing on any disk has been changed", on a BIOS boot, any choice other than erase (Calamares still offers
   "alongside"/"replace" on disks that hold an OS and has no option to hide them), a swap partition, an
-  encryption passphrase, or a non-Btrfs file system. A failed job makes Calamares skip all later jobs.
+  encryption passphrase, a non-Btrfs default file system, or any file system other than Btrfs offered on the "Erase disk" page (the user's pick there never reaches GlobalStorage, so the offer itself is checked). A failed job makes Calamares skip all later jobs.
 - After partitioning, `torch-target-setup` re-checks the actual result (efivarfs, Btrfs root on `/@`, no dm-crypt,
   GPT, FAT ESP, `@snapshots` in fstab) before relying on it.
 
@@ -50,7 +50,7 @@ Install steps are REQUIRED (failure = no bootable, loggable-in, repo-trusting, r
 installation fails and no boot entry is written) or OPTIONAL (recorded, warned, installation continues). The
 classification and the reason for each is in `image/calamares/usr/lib/torchos/torch-target-setup`; results are
 written to `/var/log/torchos-install-steps.tsv` on the installed system. `torch-target-verify` then checks the
-boot chain the bootloader job wrote (grub.cfg parses and boots `linux` from `@`, snapshot menu present, EFI
+boot chain the bootloader job wrote (grub.cfg parses and its default entry boots `linux` from this disk's `@` (root UUID + subvol), snapshot menu present, EFI
 loaders present, GRUB's own btrfs driver reads every kernel and initramfs completely).
 
 ## Known defects (not fixed)
