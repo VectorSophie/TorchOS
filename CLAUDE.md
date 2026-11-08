@@ -27,13 +27,13 @@ prioritized open work, and the test-harness gotchas. This file keeps the durable
   optional steps, independent boot-chain verification; `docs/verification/2026-11-04-install-correctness-vm.md`) and
   PR #2 *Hyprland Lua Compatibility* (Hyprland 0.57 Lua config, live Calamares autostart, user-owned `local.lua`,
   waybar 0.16.0; `docs/verification/2026-11-04-hyprland-lua-vm.md`). Do not redo or reopen them.
-- **In review: branch `fix/torchos-release-integrity`**: a publishing gate. `publish-repo.sh` is a dry run by default
-  and refuses anything not signed by the production key at `origin/master`. Also `verify-release.sh repo|iso`.
-  Threat model and limits: `docs/decisions/0002-release-integrity.md`.
-- **Next phase (do not start before release integrity is reviewed): Recovery Integrity**: interrupted rollback,
-  rollback from a GRUB-booted snapshot, previous-root/snapshot retention, safe GRUB config replacement, durable
-  operation intent/outcome records. After that comes the experience layer. AI is later, optional, and gets no
-  implicit authority.
+- **Merged 2026-11-08 (PR #3, merge 9bc1f25): Release Integrity**: `publish-repo.sh` is a dry run by default and
+  refuses anything not signed by the production key at `origin/master`; `verify-release.sh repo|iso`. Threat model,
+  review findings, and the build/signing blockers for the next publish: `docs/decisions/0002-release-integrity.md`.
+- **In design review: Recovery Integrity**: `docs/decisions/0003-recovery-integrity.md` (audit R1-R8, rollback
+  state machine, journal, GRUB replacement, retention, VM fault matrix, PRs R-A to R-E). Nothing is implemented
+  yet. Don't start coding before the owner reviews it; R-A (crash-safe rollback core) is first. After that comes the
+  experience layer. AI is later, optional, and gets no implicit authority.
 - Direction spec: `docs/superpowers/specs/2026-11-02-torchos-direction.md`. Where it conflicts with the locked
   table below, the table governs until the owner updates it.
 - Not release-ready: every 2026-11 build was signed with an isolated **test** key. The production key
@@ -139,8 +139,8 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       boots work (verified); live-ISO `systemd-loop@sr0` masked; installer removes itself; signed `[torchos]` repo +
       `torchos-keyring` + sign/publish scripts (published 2026-09-28 as GitHub release `repo`); `torch doctor` live/snapshot-boot aware.
 - [x] Installation correctness (PR #1) + Hyprland 0.57 Lua (PR #2): merged 2026-11-06, VM-verified (test-key builds)
-- [ ] Release integrity (publish gate, release-ISO check): branch `fix/torchos-release-integrity`, in review
-- [ ] Recovery integrity: next, not started
+- [x] Release integrity (publish gate, release-ISO check): PR #3 merged 2026-11-08
+- [ ] Recovery integrity: design `docs/decisions/0003-recovery-integrity.md` in review, not implemented
 - [ ] Phase 3: AI assistant (Agent SDK + MCP) wired to `torchd`
 - [x] Phase 4: `torch install` resolver — repo → Flathub → gated AUR → Distrobox, plus files (.pkg.tar.zst,
       .AppImage, .flatpakref, .exe/.msi, .deb, .rpm). Repo/AUR/AppImage/Distrobox verified in the VM; Flatpak

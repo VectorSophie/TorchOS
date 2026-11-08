@@ -14,7 +14,7 @@
    kernel added with `torch kernel add`, plus fallback initramfs images). *TorchOS snapshots* (last entry) lists
    every snapshot; pick one, then a kernel. The snapshot boots on a **temporary overlay**: the desktop works and
    you can write files, but every change vanishes at the next reboot. `torch doctor` says which snapshot you are
-   in. To keep that state, run `torch snapshot rollback <N>` from inside it and reboot.
+   in. To keep that state, run `torch snapshot rollback <N>` from inside it and reboot. **Known defect:** this currently fails with "cannot determine the root device" (`docs/decisions/0003-recovery-integrity.md` R1); until it is fixed, reboot normally and run `torch snapshot rollback <N>` from the regular system.
    *Verified:* a pre-change snapshot booted, the later change was absent, writes were gone after a normal reboot.
 
 Snapshots are **not backups**: they live on the same disk. Layout and rationale: `docs/decisions/btrfs-layout.md`.
