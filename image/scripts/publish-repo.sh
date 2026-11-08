@@ -41,41 +41,44 @@ if [[ -z $CONFIRM ]]; then
 fi
 [[ $CONFIRM == "$DEST" ]] || fail "--publish $CONFIRM is not the authorized destination $DEST"
 
-gh release view "$TAG" -R "$DEST" >/dev/null 2>&1 ||
+# Create the release only if GitHub says it does not exist (not on an auth or network error).
+if ! err=$(gh release view "$TAG" -R "$DEST" 2>&1 >/dev/null); then
+  grep -qi 'not found' <<<"$err" || fail "cannot read release $TAG on $DEST: $err"
   gh release create "$TAG" -R "$DEST" --title "TorchOS package repository" --latest=false \
     --notes "Rolling pacman repository (signed). Not a release: packages are replaced in place."
-remote=$(gh release view "$TAG" -R "$DEST" --json assets -q '.assets[].name')
-# What the LIVE database promises clients: "<filename> <sha256>".
-mkdir "$T/live"; : > "$T/live.list"
-if grep -qx torchos.db <<<"$remote"; then
-  gh release download "$TAG" -R "$DEST" -p torchos.db -D "$T/live"
-  tar -xOf "$T/live/torchos.db" --wildcards '*/desc' |
-    awk '/^%FILENAME%$/{getline f} /^%SHA256SUM%$/{getline; print f, $0}' > "$T/live.list"
 fi
+remote=$(gh release view "$TAG" -R "$DEST" --json assets -q '.assets[].name')
+# Decide on BYTES, not names: fetch the live database and every remote asset this upload would reuse or replace.
+mkdir "$T/live"; : > "$T/live.list"
+for p in "$S"/*; do
+  f=$(basename "$p")
+  [[ $f == torchos.files* ]] && continue
+  grep -qxF "$f" <<<"$remote" && gh release download "$TAG" -R "$DEST" -p "$f" -D "$T/live"
+done
+# What the LIVE database promises clients: "<filename> <sha256>".
+[[ -f $T/live/torchos.db ]] && tar -xOf "$T/live/torchos.db" --wildcards '*/desc' |
+  awk '/^%FILENAME%$/{getline f} /^%SHA256SUM%$/{getline; print f, $0}' > "$T/live.list"
 up=()
 for p in "$S"/*.pkg.tar.zst; do
   f=$(basename "$p"); s=$(sha256sum < "$p" | cut -d' ' -f1)
   live=$(awk -v f="$f" '$1==f{print $2}' "$T/live.list")
-  if [[ -n $live ]]; then
-    [[ $live == "$s" ]] || fail "$f is live with different contents: bump pkgrel instead of replacing it"
-    grep -qx "$f.sig" <<<"$remote" && continue
-  fi
-  up+=("$p" "$p.sig")
+  [[ -z $live || $live == "$s" ]] || fail "$f is live with different contents: bump pkgrel instead of replacing it"
+  cmp -s "$p" "$T/live/$f" || up+=("$p")            # absent or different remotely (repairs a damaged asset)
+  cmp -s "$p.sig" "$T/live/$f.sig" || up+=("$p.sig")
 done
 # Packages first: until the databases change, clients only see what the old database lists.
 (( ${#up[@]} )) && gh release upload "$TAG" -R "$DEST" --clobber "${up[@]}"
-# shortcut: GitHub has no atomic multi-asset swap; db and db.sig go in one call to keep the mismatch window short.
+# shortcut: GitHub has no atomic multi-asset swap. From here until the check below passes, a client may see a missing
+# database or one that does not match its signature (pacman refuses it; nothing wrong is installed). Recovery = rerun.
+trap '[[ $? == 0 ]] || echo "INCOMPLETE: the [torchos] databases on $DEST may not match their signatures; rerun this script now" >&2; rm -rf "$T"' EXIT
 gh release upload "$TAG" -R "$DEST" --clobber "$S/torchos.files" "$S/torchos.files.sig"
 gh release upload "$TAG" -R "$DEST" --clobber "$S/torchos.db" "$S/torchos.db.sig"
 
-# Check what is live now, not what we meant to send.
+# Check what is live now, byte for byte against the verified stage, not what we meant to send.
 mkdir "$T/after"
-for f in torchos.db torchos.db.sig torchos.files torchos.files.sig; do
-  gh release download "$TAG" -R "$DEST" -p "$f" -D "$T/after"
-  cmp -s "$S/$f" "$T/after/$f" || fail "remote $f is not what was uploaded: rerun this script"
+for p in "$S"/*; do
+  f=$(basename "$p")
+  gh release download "$TAG" -R "$DEST" -p "$f" -D "$T/after" && cmp -s "$p" "$T/after/$f" ||
+    fail "remote $f is not what was verified and uploaded"
 done
-remote=$(gh release view "$TAG" -R "$DEST" --json assets -q '.assets[].name')
-for p in "$S"/*.pkg.tar.zst "$S"/*.pkg.tar.zst.sig; do
-  grep -qx "$(basename "$p")" <<<"$remote" || fail "$(basename "$p") missing remotely: rerun this script"
-done
-echo "published $((${#up[@]} / 2)) new packages ($(ls "$S"/*.pkg.tar.zst | wc -l) listed) to $DEST release $TAG"
+echo "published: $(( ${#up[@]} )) package files uploaded, all $(ls "$S" | wc -l) assets verified byte-identical on $DEST release $TAG"

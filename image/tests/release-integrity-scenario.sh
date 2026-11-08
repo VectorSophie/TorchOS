@@ -22,6 +22,7 @@ done
 
 # --- the stand-in TorchOS checkout: origin/master trusts "prod" and publishes to the mock destination ---
 mkdir -p $R/image/scripts $R/image/calamares/usr/lib/torchos $R/pkg/torchos/keyring
+cp /src/pkg/torchos/torchos-keyring.install $R/pkg/torchos/
 cp /src/image/scripts/verify-release.sh /src/image/scripts/publish-repo.sh $R/image/scripts/
 cp $W/kr-prod/* $R/pkg/torchos/keyring/
 echo "printf '\n[torchos]\nServer = https://github.com/$DEST/releases/download/repo\n' >> /etc/pacman.conf" \
@@ -41,29 +42,43 @@ while (($#)); do case $1 in
 [[ $dest == mock-owner/mock-repo ]] || { echo "mock gh: refusing destination $dest" >&2; exit 1; }
 rel=$REMOTE/$tag
 case $cmd in
-  view) [[ -d $rel ]] && ls "$rel" ;;
+  view) [[ -n ${MOCK_VIEW_ERROR:-} ]] && { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+        [[ -d $rel ]] || { echo "release not found" >&2; exit 1; }; ls "$rel" ;;
   create) mkdir -p "$rel" ;;
   download) for p in "${pats[@]}"; do cp "$rel"/$p "$dir/" || exit 1; done ;;
   upload) n=0; for f in "${files[@]}"; do
       [[ -n ${MOCK_FAIL_AFTER:-} && $n -ge $MOCK_FAIL_AFTER ]] && { echo "mock gh: connection lost" >&2; exit 1; }
-      cp "$f" "$rel/" && n=$((n + 1)); done ;;
+      [[ $(basename "$f") == "${MOCK_FAIL_ON:-}" ]] && { echo "mock gh: connection lost" >&2; exit 1; }
+      cp "$f" "$rel/" && n=$((n + 1))
+      [[ $(basename "$f") == "${MOCK_CORRUPT:-}" ]] && echo damaged >> "$rel/$(basename "$f")"; done; true ;;
   *) exit 1 ;;
 esac
 EOF
 chmod +x $W/bin/gh
 
-# --- packages: mkpkg <file> <name> <ver> <salt> [keyring dir] ---
+# --- packages: mkpkg <file> <name> <ver> <salt> [keyring dir] [extra setup, run in the package root] ---
+# A keyring package carries the committed torchos-keyring.install as .INSTALL, as makepkg does.
 mkpkg() {
   local d=$W/build; rm -rf $d; mkdir -p $d/usr/share/$2
   printf 'pkgname = %s\npkgbase = %s\npkgver = %s\npkgdesc = test\nbuilddate = 1\nsize = 1\narch = any\n' $2 $2 $3 > $d/.PKGINFO
   echo "$4" > $d/usr/share/$2/content
-  [[ -n ${5:-} ]] && { mkdir -p $d/usr/share/pacman/keyrings; cp $5/* $d/usr/share/pacman/keyrings/; }
-  (cd $d && bsdtar --zstd -cf $W/pkgs/$1 .PKGINFO usr)
+  [[ -n ${5:-} ]] && { mkdir -p $d/usr/share/pacman/keyrings; cp $5/* $d/usr/share/pacman/keyrings/
+                       rm -r "${d:?}/usr/share/$2"; cp /src/pkg/torchos/torchos-keyring.install $d/.INSTALL; }
+  [[ -n ${6:-} ]] && (cd $d && eval "$6")
+  # shellcheck disable=SC2046  # fixture member names have no spaces
+  (cd $d && shopt -s dotglob && bsdtar --zstd -cf $W/pkgs/$1 .PKGINFO $(printf "%s\n" * | grep -vx .PKGINFO))
 }
 mkpkg A torch-cli 1.0-1 a; mkpkg Aold torch-cli 1.0-1 a-older-build; mkpkg B torch-cli 1.1-1 b
 mkpkg K torchos-keyring 1.0-1 k $W/kr-prod; mkpkg Kt torchos-keyring 1.0-1 k $W/kr-test
-fname() { case $1 in A|Aold) echo torch-cli-1.0-1-any.pkg.tar.zst ;; B) echo torch-cli-1.1-1-any.pkg.tar.zst ;;
-  K|Kt) echo torchos-keyring-1.0-1-any.pkg.tar.zst ;; esac; }
+# Trust changes that leave the three keyring files intact:
+mkpkg Kextra torchos-keyring 1.0-1 k $W/kr-prod "cp $W/kr-test/torchos.gpg usr/share/pacman/keyrings/extra.gpg"
+mkpkg Kscript torchos-keyring 1.0-1 k $W/kr-prod "echo 'post_install() { pacman-key --lsign-key 0xDEAD; }' >> .INSTALL"
+mkpkg Aring torch-cli 1.0-1 a "" "mkdir -p usr/share/pacman/keyrings; cp $W/kr-test/torchos.gpg usr/share/pacman/keyrings/x.gpg"
+mkpkg Ascript torch-cli 1.0-1 a "" "echo 'post_install() { pacman-key --add /usr/share/torch-cli/k.gpg; }' > .INSTALL"
+mkpkg Ahook torch-cli 1.0-1 a "" "mkdir -p usr/share/libalpm/hooks
+  printf '[Action]\nWhen = PostTransaction\nExec = /usr/bin/pacman-key --lsign-key 0xDEAD\n' > usr/share/libalpm/hooks/k.hook"
+fname() { case $1 in A*) echo torch-cli-1.0-1-any.pkg.tar.zst ;; B) echo torch-cli-1.1-1-any.pkg.tar.zst ;;
+  K*) echo torchos-keyring-1.0-1-any.pkg.tar.zst ;; esac; }
 sign() { gpg --homedir $W/$2 --batch --yes --detach-sign --no-armor -o "$1.sig" "$1"; }
 # mkrepo <dir> <db key> <pkg>:<key>...
 mkrepo() {
@@ -109,6 +124,14 @@ rm -rf $W/case; cp -a $W/good $W/case; rm $W/case/"$(fname A)".sig
                                               case_repo "missing package signature"
 rm -rf $W/case; cp -a $W/good $W/case; rm $W/case/torchos.db.tar.gz.sig
                                               case_repo "missing database signature"
+mkrepo $W/case prod A:prod Kextra:prod;       case_repo "keyring package with an extra keyring file"
+mkrepo $W/case prod A:prod Kscript:prod;      case_repo "keyring package with a modified install script"
+mkrepo $W/case prod Aring:prod K:prod;        case_repo "another package installing a keyring"
+mkrepo $W/case prod Ascript:prod K:prod;      case_repo "another package whose install script runs pacman-key"
+mkrepo $W/case prod Ahook:prod K:prod;        case_repo "another package with a pacman hook running pacman-key"
+rm -rf $W/case; cp -a $W/good $W/case; f=$W/case/"$(fname A)"
+gpg --homedir $W/test --batch --detach-sign --no-armor -o - $f >> $f.sig
+                                              case_repo "valid production signature plus a second, test-key signature"
 # Trust anchor and tooling.
 use_repo $W/good; cp $W/kr-test/* $R/pkg/torchos/keyring/; attempt; publish --publish $DEST
                                               expect_refused "working-tree keyring swapped to a test key (prod-signed repo)"
@@ -120,21 +143,36 @@ use_repo $W/good; echo '# local edit' >> $R/image/scripts/verify-release.sh; att
                                               expect_refused "verifier modified in the working tree"
 use_repo $W/good; attempt; publish --publish evil-owner/mock-repo; expect_refused "--publish to an unauthorized destination"
 use_repo $W/good; attempt; GH_REPO=evil-owner/mock-repo publish --publish $DEST; expect_refused "GH_REPO pointing elsewhere"
+use_repo $W/good; attempt; MOCK_VIEW_ERROR=1 publish --publish $DEST; expect_refused "release unreadable (auth error): no create"
 
 # === repository: positive cases ===
 use_repo $W/good; : > $GHLOG
 if publish && [[ ! -s $GHLOG ]] && grep -q 'dry run' $W/out; then ok "dry run verifies and calls no gh at all"; else bad "dry run"; fi
 if publish --publish $DEST && cmp -s $REMOTE/repo/torchos.db $W/good/torchos.db.tar.gz &&
    cmp -s $REMOTE/repo/"$(fname A)" $W/good/"$(fname A)"; then ok "publish of a good repo (mock), remote verified"; else bad "publish good"; fi
-if publish --publish $DEST && grep -q 'published 0 new' $W/out; then ok "republish is idempotent (no package re-upload)"; else bad "republish"; fi
+if publish --publish $DEST && grep -q 'published: 0 package files' $W/out; then ok "republish is idempotent (no package re-upload)"; else bad "republish"; fi
 mkrepo $W/case prod Aold:prod K:prod; use_repo $W/case; attempt; publish --publish $DEST
                                               expect_refused "replacing a live package filename with different bytes"
+# Remote integrity is judged by bytes, not names: a damaged live asset is replaced, a damaged upload is caught.
+echo damaged >> $REMOTE/repo/"$(fname A)"; use_repo $W/good
+if publish --publish $DEST && cmp -s $REMOTE/repo/"$(fname A)" $W/good/"$(fname A)"; then
+  ok "damaged remote package with the right name is detected by bytes and replaced"; else bad "damaged remote package"; fi
+use_repo $W/good; MOCK_CORRUPT=torchos.files publish --publish $DEST
+if [[ $? != 0 ]] && grep -q 'torchos.files is not what was verified' $W/out && grep -q INCOMPLETE $W/out; then
+  ok "upload that lands different bytes is caught by the post-publish byte check"; else bad "corrupted upload"; fi
+if publish --publish $DEST; then ok "rerun repairs it"; else bad "rerun after corrupted upload"; fi
 # Interrupted publish: the live database must still describe intact packages, and a rerun completes it.
 use_repo $W/next; : > $GHLOG
 MOCK_FAIL_AFTER=1 publish --publish $DEST
 if [[ $? != 0 ]] && cmp -s $REMOTE/repo/torchos.db $W/good/torchos.db.tar.gz && cmp -s $REMOTE/repo/"$(fname A)" $W/good/"$(fname A)"; then
   ok "interrupted upload leaves the old database and its packages intact"; else bad "interrupted upload"; fi
-if publish --publish $DEST && cmp -s $REMOTE/repo/torchos.db $W/next/torchos.db.tar.gz; then
+# Interrupted between the database and its signature: the window GitHub cannot close. It must be reported, and a rerun fixes it.
+MOCK_FAIL_ON=torchos.db.sig publish --publish $DEST
+if [[ $? != 0 ]] && grep -q INCOMPLETE $W/out && cmp -s $REMOTE/repo/torchos.db $W/next/torchos.db.tar.gz &&
+   ! cmp -s $REMOTE/repo/torchos.db.sig $W/next/torchos.db.tar.gz.sig; then
+  ok "interruption between database and signature is reported as INCOMPLETE"; else bad "database-phase interruption"; fi
+if publish --publish $DEST && cmp -s $REMOTE/repo/torchos.db $W/next/torchos.db.tar.gz &&
+   cmp -s $REMOTE/repo/torchos.db.sig $W/next/torchos.db.tar.gz.sig; then
   ok "rerun after interruption completes the publish"; else bad "rerun after interruption"; fi
 
 # === ISO ===
@@ -144,6 +182,7 @@ mkiso() {
   echo torchos > $r/etc/hostname; cp $W/kr-prod/* $r/usr/share/pacman/keyrings/
   (cd $r && eval "$2")
   mksquashfs $r $W/iso/$1.d/arch/x86_64/airootfs.sfs -quiet -noappend >/dev/null
+  [[ -n ${MKISO_POST:-} ]] && (cd $W/iso/$1.d/arch/x86_64 && eval "$MKISO_POST")
   xorriso -as mkisofs -quiet -o $W/iso/$1.iso $W/iso/$1.d 2>/dev/null
 }
 iso() { (cd /; $R/image/scripts/verify-release.sh iso $W/iso/$1.iso) > $W/out 2>&1; }
@@ -157,6 +196,10 @@ iso_refused hiddenkey "mkdir -p root/.ssh; echo k > root/.ssh/authorized_keys" "
 iso_refused sshd "ln -s /usr/lib/systemd/system/sshd.service etc/systemd/system/multi-user.target.wants/sshd.service" "sshd enabled, no key"
 iso_refused testkey "cp $W/kr-test/* usr/share/pacman/keyrings/" "keyring trusts a test key"
 iso_refused nokeyring "rm usr/share/pacman/keyrings/*" "keyring missing"
+iso_refused optkey "mkdir -p opt/x; echo k > opt/x/authorized_keys" "SSH key outside etc/root/home"
+iso_refused hostkey "echo k > etc/ssh/ssh_host_ed25519_key" "baked-in SSH host private key"
+MKISO_POST="head -c 300 airootfs.sfs > t && mv t airootfs.sfs" iso_refused corrupt true "truncated (corrupt) airootfs"
+mkiso nossh "rm -r etc/ssh"; if iso nossh; then ok "release ISO without openssh at all passes"; else bad "ISO without etc/ssh"; fi
 
 echo "== release integrity: $pass passed, ${#failed[@]} failed"
 for f in "${failed[@]}"; do echo "   $f"; done

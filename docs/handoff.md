@@ -150,6 +150,10 @@ Setup that exists on the owner's machine:
 - [ ] publish gate merged (`fix/torchos-release-integrity`). After that, publish only with
       `image/scripts/publish-repo.sh` (dry run) and then `--publish VectorSophie/TorchOS`, on the machine that holds the production key
 - [ ] release ISO passes `image/scripts/verify-release.sh iso <iso>` (production keyring, no dev SSH/markers)
+- [ ] bump `pkgver`/`pkgrel` before the next publish: production serves `*-0.2.0-1`, and the gate refuses to replace a
+      live filename with different bytes
+- [ ] build release packages from a clean checkout of a tagged commit, and sign outside the unpinned container (or in
+      a digest-pinned image). Provenance and key handling are not enforced yet: `docs/decisions/0002-release-integrity.md`
 - [ ] release ISO rebuilt from the final tree without `DEV_SSH_PUBKEY`, smoke-tested, checksum recorded
       (the 2026-09-26 release ISO predates this session's fixes)
 - [ ] install and recovery guides walked through by someone who did not write them

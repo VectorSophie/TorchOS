@@ -25,6 +25,8 @@ FPR=$(gpg --show-keys --with-colons "$T/torchos.gpg" 2>/dev/null | awk -F: '$1==
 [[ -n $FPR ]] || fail "committed torchos.gpg must hold exactly one primary key"
 [[ $(grep -c . "$T/torchos-trusted") == 1 && $(cut -d: -f1 "$T/torchos-trusted") == "$FPR" ]] ||
   fail "committed torchos-trusted does not name exactly the key in torchos.gpg ($FPR)"
+git -C "$ROOT" show "$TRUST_REF:pkg/torchos/torchos-keyring.install" > "$T/keyring.install" ||
+  fail "pkg/torchos/torchos-keyring.install missing at $TRUST_REF"
 grep -qi "$FPR" "$T/torchos-revoked" && fail "authorized key $FPR is in torchos-revoked"
 # Destination = the Server line installed systems actually pull [torchos] from.
 SRV=$(git -C "$ROOT" show "$TRUST_REF:image/calamares/usr/lib/torchos/torch-target-setup" |
@@ -34,11 +36,14 @@ DEST=$(sed -E 's|.*github.com/([^/]+/[^/]+)/releases/download/(.*)|\1 \2|' <<<"$
 { echo "$DEST" >&3; } 2>/dev/null || true
 echo "authorized key $FPR (from $TRUST_REF $(git -C "$ROOT" rev-parse --short "$TRUST_REF")), destination $DEST"
 
-# sig_ok <sig> <file>: valid signature whose PRIMARY key is the authorized one (gpgv sees no other key).
+# sig_ok <sig> <file>: gpgv (which sees no other key) accepts the file, and it holds exactly ONE signature, whose
+# PRIMARY key is the authorized one. gpgv fails if any signature in the file is bad or from an unknown key.
 sig_ok() {
+  local st
   [[ -f $1 ]] || { echo "missing signature $(basename "$1")" >&2; return 1; }
-  [[ $(gpgv --status-fd 1 --keyring "$T/torchos.gpg" "$1" "$2" 2>/dev/null | awk '$2=="VALIDSIG"{print $12}') == "$FPR" ]] ||
-    { echo "bad or unauthorized signature on $(basename "$2")" >&2; return 1; }
+  st=$(gpgv --status-fd 1 --keyring "$T/torchos.gpg" "$1" "$2" 2>/dev/null) &&
+    [[ $(awk '$2=="VALIDSIG"{print $12}' <<<"$st") == "$FPR" ]] ||
+    { echo "bad, extra or unauthorized signature on $(basename "$2")" >&2; return 1; }
 }
 # Byte-identical production keyring files under <dir>/usr/share/pacman/keyrings.
 keyring_ok() {
@@ -69,27 +74,45 @@ repo)
   for p in "$D"/*.pkg.tar.zst; do
     awk -v f="$(basename "$p")" '$1==f{n++} END{exit !n}' "$T/torchos.db.list" || { echo "$(basename "$p") is not in the database" >&2; bad=1; }
   done
-  # The keyring package decides what every installed system trusts next: it must carry the production key.
+  # Pacman trust: only torchos-keyring may touch it, with exactly the committed keyring files and install script.
   k=$(awk '$1 ~ /^torchos-keyring-[0-9]/{print $1}' "$T/torchos.db.list")
   [[ $(grep -c . <<<"$k") == 1 ]] || fail "expected exactly one torchos-keyring package, got: ${k:-none}"
-  mkdir "$T/kp" && tar --zstd -xf "$D/$k" -C "$T/kp" usr/share/pacman/keyrings 2>/dev/null || { echo "$k has no keyrings" >&2; bad=1; }
-  keyring_ok "$T/kp" "$k" || bad=1
+  while read -r p _; do
+    [[ -f $D/$p ]] || continue
+    tar --zstd -tf "$D/$p" 2>/dev/null | grep -v '/$' > "$T/members" || { echo "$p unreadable" >&2; bad=1; continue; }
+    if [[ $p == "$k" ]]; then
+      grep -vxF -e .PKGINFO -e .BUILDINFO -e .MTREE -e .INSTALL -e usr/share/pacman/keyrings/torchos.gpg \
+        -e usr/share/pacman/keyrings/torchos-trusted -e usr/share/pacman/keyrings/torchos-revoked "$T/members" |
+        sed "s|^|$p ships unexpected |" | grep . >&2 && bad=1
+      rm -rf "$T/kp"; mkdir "$T/kp"; tar --zstd -xf "$D/$p" -C "$T/kp" 2>/dev/null || { echo "$p unreadable" >&2; bad=1; }
+      keyring_ok "$T/kp" "$p" || bad=1
+      cmp -s "$T/keyring.install" "$T/kp/.INSTALL" || { echo "$p: .INSTALL is not the committed torchos-keyring.install" >&2; bad=1; }
+    else
+      grep -E '^(usr/share/pacman/keyrings/|etc/pacman\.conf$|etc/pacman\.d/)' "$T/members" |
+        sed "s|^|$p touches pacman trust: |" | grep . >&2 && bad=1
+      # Install scripts and libalpm hooks run as root on every system: none but the keyring's may manage keys.
+      mapfile -t s < <(grep -E '^\.INSTALL$|\.hook$' "$T/members")
+      (( ${#s[@]} )) && tar --zstd -xOf "$D/$p" "${s[@]}" 2>/dev/null | grep -qE 'pacman-key|pacman\.d/gnupg|gpg ' &&
+        { echo "$p: install script or hook manages pacman keys" >&2; bad=1; }
+    fi
+  done < "$T/torchos.db.list"
   [[ $bad == 0 ]] || fail "repository failed verification"
   echo "OK: $(wc -l < "$T/torchos.db.list") packages and both databases signed by $FPR, contents match"
   ;;
 iso)
   ISO=${2:?iso file}; X=$T/x; bad=0
   osirrox -indev "$ISO" -extract /arch/x86_64/airootfs.sfs "$T/a.sfs" >/dev/null 2>&1 || fail "cannot extract airootfs.sfs from $ISO"
-  unsquashfs -q -d "$X" "$T/a.sfs" etc root home usr/share/pacman/keyrings >/dev/null 2>&1 || true
-  [[ -d $X/etc ]] || fail "airootfs has no /etc"
+  # Name checks run on the listing of the WHOLE image (fails on a corrupt image), not on a partial extraction.
+  unsquashfs -ls -d '' "$T/a.sfs" > "$T/list" 2>/dev/null || fail "cannot list airootfs.sfs (corrupt image?)"
+  grep -q '^/etc/' "$T/list" || fail "airootfs has no /etc"
+  grep -xE '/etc/torch-dev-build|/etc/ssh/dev_authorized_keys|/etc/ssh/sshd_config\.d/10-dev\.conf' "$T/list" |
+    sed 's/^/development marker /' | grep . >&2 && bad=1
+  grep -E '/[^/]*authorized_keys[^/]*$|^/etc/ssh/ssh_host_[^/]*_key$' "$T/list" | sed 's/^/baked-in SSH credential /' | grep . >&2 && bad=1
+  grep -E '^/etc/systemd/system/.*sshd[^/]*$' "$T/list" | sed 's/^/sshd enabled: /' | grep . >&2 && bad=1
+  # unsquashfs exits 0 for paths that do not exist; the comparisons below fail on anything missing.
+  unsquashfs -st -q -d "$X" "$T/a.sfs" usr/share/pacman/keyrings etc/ssh >/dev/null 2>&1 || fail "cannot extract from airootfs.sfs"
   keyring_ok "$X" "ISO" || bad=1
-  for f in etc/torch-dev-build etc/ssh/dev_authorized_keys etc/ssh/sshd_config.d/10-dev.conf; do
-    [[ -e $X/$f || -L $X/$f ]] && { echo "development marker /$f present" >&2; bad=1; }
-  done
-  # Any baked-in SSH access, wherever it is put.
-  while read -r f; do echo "SSH key file /${f#"$X"/} present" >&2; bad=1; done < <(find "$X" -name '*authorized_keys*' 2>/dev/null)
   grep -rlis '^[[:space:]]*AuthorizedKeys' "$X/etc/ssh" 2>/dev/null | sed "s|^$X|sshd override |" | grep . >&2 && bad=1
-  find "$X/etc/systemd/system" -name 'sshd*' 2>/dev/null | grep -q . && { echo "sshd is enabled in the image" >&2; bad=1; }
   [[ $bad == 0 ]] || fail "ISO is not a release image"
   echo "OK: ISO trusts only $FPR, no development access found"
   ;;
