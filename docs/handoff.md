@@ -1,10 +1,21 @@
 # TorchOS handoff (2026-09-27, second session)
 
-> **Update 2026-11-02:** development moves to a native Linux machine. Work in progress on branch
-> `feat/torchos-install-correctness`: the installation-correctness slice (pre-partition install gate,
-> required/optional install steps, boot-chain check), NOT READY. It has passed static, unit and container tests
-> only. Its VM verification is still to run: `image/tests/vm/README.md`. Direction and plan:
-> `docs/superpowers/specs/2026-11-02-torchos-direction.md`. Everything below describes `master` as of 2026-09-28.
+> **Current state (2026-11-08):** development is on the native Linux machine.
+> - **Merged into `master` 2026-11-06 (b842a36):** PR #1 *Installation Correctness* and PR #2 *Hyprland Lua
+>   Compatibility*. Both are VM-verified in QEMU/OVMF with **test-key** builds that were never published. Evidence:
+>   `docs/verification/2026-11-04-*.md`. (The 2026-11-02 note that called install-correctness "NOT READY, VM
+>   verification still to run" is superseded.)
+> - **In review:** `fix/torchos-release-integrity`. `publish-repo.sh` now verifies the exact upload set against
+>   the production key committed at `origin/master`, is a dry run unless given `--publish OWNER/REPO`, and orders
+>   uploads to survive interruption. `verify-release.sh iso` checks a release ISO's contents. Design, threat model
+>   and remaining limits: `docs/decisions/0002-release-integrity.md`.
+> - **Next:** recovery integrity (rollback interruption, snapshot-boot rollback, retention, GRUB config safety,
+>   durable operation records). Then the experience layer. AI is later and optional.
+> - **Still not release-ready:** no production-key build since 2026-09-28, no real hardware, LUKS/BIOS/dual boot/
+>   Secure Boot unsupported. The production signing key is only on the Windows/WSL machine; this Linux host has none.
+>
+> Direction: `docs/superpowers/specs/2026-11-02-torchos-direction.md`. Sections 1-8 below describe `master` as of
+> 2026-09-28 (historical). Read them together with the note above.
 
 For a fresh Claude Code session, on the Linux machine **or on Windows (WSL2)**. Read `CLAUDE.md` first (rules and
 locked decisions), then this file. Code pushed to GitHub 2026-09-28, and the
@@ -135,7 +146,10 @@ Setup that exists on the owner's machine:
       git history: rewrite only with the owner's say-so). The signing key's private half is not in the repo.
 - [x] VM disks and ISOs ignored by Git
 - [x] `docs/known-issues.md` reconciled with section 1 above
-- [x] package repo published (GitHub release `repo`)
+- [x] package repo published (GitHub release `repo`, 2026-09-28; published before the gate below existed)
+- [ ] publish gate merged (`fix/torchos-release-integrity`). After that, publish only with
+      `image/scripts/publish-repo.sh` (dry run) and then `--publish VectorSophie/TorchOS`, on the machine that holds the production key
+- [ ] release ISO passes `image/scripts/verify-release.sh iso <iso>` (production keyring, no dev SSH/markers)
 - [ ] release ISO rebuilt from the final tree without `DEV_SSH_PUBKEY`, smoke-tested, checksum recorded
       (the 2026-09-26 release ISO predates this session's fixes)
 - [ ] install and recovery guides walked through by someone who did not write them

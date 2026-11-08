@@ -21,12 +21,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Read `docs/handoff.md` first** — current verified state, how to resume on Linux or Windows/WSL2, the
 prioritized open work, and the test-harness gotchas. This file keeps the durable rules and decisions.
 
-**Proposed direction (2026-11-02, awaiting owner approval):**
-`docs/superpowers/specs/2026-11-02-torchos-direction.md` — audit, defects found by code reading, the
-three-layer plan, and the first tasks. Where it conflicts with the locked table below, the table still
-governs until the owner approves; then update the table. Its first slice (installation correctness) is on
-branch `feat/torchos-install-correctness`, NOT READY until the VM verification in `image/tests/vm/README.md`
-has run on Linux.
+**Current state (2026-11-08) — read this before the older status text below:**
+- **Merged to `master` (b842a36, 2026-11-06), VM-verified on native Linux with test-key builds, not released:**
+  PR #1 *Installation Correctness* (pre-partition Calamares gate, UEFI/GPT/Btrfs erase-disk only, required vs
+  optional steps, independent boot-chain verification; `docs/verification/2026-11-04-install-correctness-vm.md`) and
+  PR #2 *Hyprland Lua Compatibility* (Hyprland 0.57 Lua config, live Calamares autostart, user-owned `local.lua`,
+  waybar 0.16.0; `docs/verification/2026-11-04-hyprland-lua-vm.md`). Do not redo or reopen them.
+- **In review: branch `fix/torchos-release-integrity`**: a publishing gate. `publish-repo.sh` is a dry run by default
+  and refuses anything not signed by the production key at `origin/master`. Also `verify-release.sh repo|iso`.
+  Threat model and limits: `docs/decisions/0002-release-integrity.md`.
+- **Next phase (do not start before release integrity is reviewed): Recovery Integrity**: interrupted rollback,
+  rollback from a GRUB-booted snapshot, previous-root/snapshot retention, safe GRUB config replacement, durable
+  operation intent/outcome records. After that comes the experience layer. AI is later, optional, and gets no
+  implicit authority.
+- Direction spec: `docs/superpowers/specs/2026-11-02-torchos-direction.md`. Where it conflicts with the locked
+  table below, the table governs until the owner updates it.
+- Not release-ready: every 2026-11 build was signed with an isolated **test** key. The production key
+  (`FD561EDB…4AC8`) exists only on the owner's Windows/WSL machine. No real hardware has been tested.
 
 TorchOS v2 is a from-scratch rebuild, approved 2026-08-24. Full rationale for every decision below:
 **`docs/superpowers/specs/2026-08-24-torchos-v2-architecture-design.md`** (the locked spec) and its
@@ -127,6 +138,9 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       greetd + tuigreet login; GRUB defaults to `linux`, no BootNext clutter; grub-btrfs overlay hook so snapshot
       boots work (verified); live-ISO `systemd-loop@sr0` masked; installer removes itself; signed `[torchos]` repo +
       `torchos-keyring` + sign/publish scripts (published 2026-09-28 as GitHub release `repo`); `torch doctor` live/snapshot-boot aware.
+- [x] Installation correctness (PR #1) + Hyprland 0.57 Lua (PR #2): merged 2026-11-06, VM-verified (test-key builds)
+- [ ] Release integrity (publish gate, release-ISO check): branch `fix/torchos-release-integrity`, in review
+- [ ] Recovery integrity: next, not started
 - [ ] Phase 3: AI assistant (Agent SDK + MCP) wired to `torchd`
 - [x] Phase 4: `torch install` resolver — repo → Flathub → gated AUR → Distrobox, plus files (.pkg.tar.zst,
       .AppImage, .flatpakref, .exe/.msi, .deb, .rpm). Repo/AUR/AppImage/Distrobox verified in the VM; Flatpak
