@@ -9,7 +9,7 @@
 >   against the production key committed at `origin/master`, is a dry run unless given `--publish OWNER/REPO`, and
 >   orders and byte-checks the upload. `verify-release.sh iso` checks a release ISO's contents. Design and remaining
 >   limits: `docs/decisions/0002-release-integrity.md`.
-> - **In design review:** recovery integrity, `docs/decisions/0003-recovery-integrity.md`. None of its failure
+> - **Design approved with revisions (2026-11-08):** recovery integrity, `docs/decisions/0003-recovery-integrity.md`. None of its failure
 >   classes is reproduced yet; each has a VM case. Not implemented. After it: the experience layer. AI is later and optional.
 > - **Still not release-ready:** no production-key build since 2026-09-28, no real hardware, LUKS/BIOS/dual boot/
 >   Secure Boot unsupported. The production signing key is only on the Windows/WSL machine; this Linux host has none.

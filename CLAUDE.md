@@ -30,7 +30,7 @@ prioritized open work, and the test-harness gotchas. This file keeps the durable
 - **Merged 2026-11-08 (PR #3, merge 9bc1f25): Release Integrity**: `publish-repo.sh` is a dry run by default and
   refuses anything not signed by the production key at `origin/master`; `verify-release.sh repo|iso`. Threat model,
   review findings, and the build/signing blockers for the next publish: `docs/decisions/0002-release-integrity.md`.
-- **In design review: Recovery Integrity**: `docs/decisions/0003-recovery-integrity.md` (audit R1-R8, rollback
+- **Recovery Integrity: design approved with revisions (2026-11-08), F0 then R-A next**: `docs/decisions/0003-recovery-integrity.md` (audit R1-R8, rollback
   state machine, journal, GRUB replacement, retention, VM fault matrix, PRs R-A to R-E). Nothing is implemented
   yet. Don't start coding before the owner reviews it; R-A (crash-safe rollback core) is first. After that comes the
   experience layer. AI is later, optional, and gets no implicit authority.
@@ -140,7 +140,7 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       `torchos-keyring` + sign/publish scripts (published 2026-09-28 as GitHub release `repo`); `torch doctor` live/snapshot-boot aware.
 - [x] Installation correctness (PR #1) + Hyprland 0.57 Lua (PR #2): merged 2026-11-06, VM-verified (test-key builds)
 - [x] Release integrity (publish gate, release-ISO check): PR #3 merged 2026-11-08
-- [ ] Recovery integrity: design `docs/decisions/0003-recovery-integrity.md` in review, not implemented
+- [ ] Recovery integrity: design `docs/decisions/0003-recovery-integrity.md` approved (revised), F0 gate then R-A
 - [ ] Phase 3: AI assistant (Agent SDK + MCP) wired to `torchd`
 - [x] Phase 4: `torch install` resolver — repo → Flathub → gated AUR → Distrobox, plus files (.pkg.tar.zst,
       .AppImage, .flatpakref, .exe/.msi, .deb, .rpm). Repo/AUR/AppImage/Distrobox verified in the VM; Flatpak

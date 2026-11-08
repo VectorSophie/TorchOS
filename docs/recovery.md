@@ -6,7 +6,10 @@
 3. **Make a rollback:** `torch snapshot rollback <id>` (asks for confirmation). It prepares the swap and you
    **reboot to complete it**. `torchd` builds a writable copy of the snapshot, renames the current `@` to
    `@.pre-rollback-<UTC time>` and installs the copy as `@`. `/home`, logs, caches and the snapshots
-   themselves are not touched. If anything fails part-way the original `@` stays in place.
+   themselves are not touched. **Current limitation:** the swap is two separate renames with no sync, so a
+   power loss at the wrong moment can leave no `@` at all (GRUB stops at `grub rescue>`), and a failure between the
+   renames is reported as "original restored" without being checked. Recovery from the live ISO: mount the top level
+   (`subvolid=5`) and rename `@.pre-rollback-*` back to `@`. Fix in progress: `docs/decisions/0003-recovery-integrity.md` R2/R8.
    *Verified across a real reboot:* a system file and an installed package reverted, a file in `/home` remained.
 4. **Undo a rollback / reclaim space:** the previous root is kept as `@.pre-rollback-*` on the top-level
    filesystem. Delete it once you are sure: mount `subvolid=5`, `btrfs subvolume delete @.pre-rollback-...`.
