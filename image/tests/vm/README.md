@@ -31,6 +31,8 @@ A harness failure is not a product failure, and production code should not be be
 | `failure.sh` | F: fallback loader with empty NVRAM; C: injected required-step failure stops the install (no rollback) |
 | `desktop.sh` | E: live desktop on the Lua config: Calamares autostarts maximized with no harness help, TorchOS styling/binds/session programs (each once), keyboard shortcuts, config reload, SUPER+I |
 | `rc-smoke.sh` | release ISO (no `DEV_SSH_PUBKEY`): boots, no SSH, doctor, installer reachable by keyboard |
+| `f0-exchange.sh` | F0 (0003 §7): `renameat2(RENAME_EXCHANGE)` of `@` and a snapshot copy, with sync/no-sync power cuts, plus the old two-rename window (expected `grub rescue>`). Needs `A-installed.qcow2` + `A-installed.vars` (copy of `OVMF_VARS.fd` after `supported.sh`) |
+| `recovery-ra.sh` | R-A: builds this tree's torchd (release + `fault-injection`), copies it onto overlays only, F1-F5, F12-F14: crash at each rollback step, pending refusal, rollback to a pre-R-A torchd. `SSH_PORT` selects another forwarded port if 2222 is taken |
 
 ## Confirmed in the VM (formerly assumptions)
 

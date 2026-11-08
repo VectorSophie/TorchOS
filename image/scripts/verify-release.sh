@@ -45,6 +45,8 @@ sig_ok() {
     [[ $(awk '$2=="VALIDSIG"{print $12}' <<<"$st") == "$FPR" ]] ||
     { echo "bad, extra or unauthorized signature on $(basename "$2")" >&2; return 1; }
 }
+# A torchd built with the development-only fault-injection feature (docs/decisions/0003-recovery-integrity.md §7.1).
+FAULT_MARKER=TORCHD-FAULT-INJECTION-BUILD
 # Byte-identical production keyring files under <dir>/usr/share/pacman/keyrings.
 keyring_ok() {
   for f in torchos.gpg torchos-trusted torchos-revoked; do
@@ -90,6 +92,11 @@ repo)
     else
       grep -E '^(usr/share/pacman/keyrings/|etc/pacman\.conf$|etc/pacman\.d/)' "$T/members" |
         sed "s|^|$p touches pacman trust: |" | grep . >&2 && bad=1
+      # Extract to a file: piping a large binary into `grep -q` makes tar die of SIGPIPE, and pipefail hides the match.
+      if grep -qx usr/bin/torchd "$T/members"; then
+        tar --zstd -xOf "$D/$p" usr/bin/torchd > "$T/torchd" 2>/dev/null || { echo "$p: cannot read usr/bin/torchd" >&2; bad=1; }
+        grep -qaF "$FAULT_MARKER" "$T/torchd" && { echo "$p: torchd is a fault-injection (development) build" >&2; bad=1; }
+      fi
       # Install scripts and libalpm hooks run as root on every system: none but the keyring's may manage keys.
       mapfile -t s < <(grep -E '^\.INSTALL$|\.hook$' "$T/members")
       (( ${#s[@]} )) && tar --zstd -xOf "$D/$p" "${s[@]}" 2>/dev/null | grep -qE 'pacman-key|pacman\.d/gnupg|gpg ' &&
@@ -110,8 +117,10 @@ iso)
   grep -E '/[^/]*authorized_keys[^/]*$|^/etc/ssh/ssh_host_[^/]*_key$' "$T/list" | sed 's/^/baked-in SSH credential /' | grep . >&2 && bad=1
   grep -E '^/etc/systemd/system/.*sshd[^/]*$' "$T/list" | sed 's/^/sshd enabled: /' | grep . >&2 && bad=1
   # unsquashfs exits 0 for paths that do not exist; the comparisons below fail on anything missing.
-  unsquashfs -st -q -d "$X" "$T/a.sfs" usr/share/pacman/keyrings etc/ssh >/dev/null 2>&1 || fail "cannot extract from airootfs.sfs"
+  unsquashfs -st -q -d "$X" "$T/a.sfs" usr/share/pacman/keyrings etc/ssh usr/bin/torchd >/dev/null 2>&1 || fail "cannot extract from airootfs.sfs"
   keyring_ok "$X" "ISO" || bad=1
+  [[ -f $X/usr/bin/torchd ]] || { echo "ISO has no usr/bin/torchd" >&2; bad=1; }
+  grep -qaF "$FAULT_MARKER" "$X/usr/bin/torchd" 2>/dev/null && { echo "ISO torchd is a fault-injection (development) build" >&2; bad=1; }
   grep -rlis '^[[:space:]]*AuthorizedKeys' "$X/etc/ssh" 2>/dev/null | sed "s|^$X|sshd override |" | grep . >&2 && bad=1
   [[ $bad == 0 ]] || fail "ISO is not a release image"
   echo "OK: ISO trusts only $FPR, no development access found"

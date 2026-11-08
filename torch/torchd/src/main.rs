@@ -4,6 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 
 mod audit;
+mod journal;
 mod ops;
 mod policy;
 mod protocol;
@@ -16,6 +17,14 @@ use protocol::{Request, Response, Status};
 const SOCKET_DIR: &str = "/run/torchd";
 const SOCKET_PATH: &str = "/run/torchd/torchd.sock";
 const AUDIT_PATH: &str = "/var/log/torchd/audit.jsonl";
+#[cfg(not(feature = "fault-injection"))]
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+#[cfg(feature = "fault-injection")]
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+fault-injection");
+/// Present in the binary only when built with the development-only fault-injection feature; the PKGBUILD and
+/// verify-release.sh refuse any torchd containing it (docs/decisions/0003-recovery-integrity.md §7.1).
+#[cfg(feature = "fault-injection")]
+pub const FAULT_MARKER: &str = "TORCHD-FAULT-INJECTION-BUILD";
 
 fn main() -> Result<()> {
     std::fs::create_dir_all(SOCKET_DIR).with_context(|| format!("creating {SOCKET_DIR}"))?;
@@ -37,7 +46,15 @@ fn main() -> Result<()> {
         anyhow::bail!("chown root:torch-agent {SOCKET_PATH} failed");
     }
 
-    println!("torchd listening on {SOCKET_PATH}");
+    #[cfg(feature = "fault-injection")]
+    eprintln!("WARNING {FAULT_MARKER}: development build with fault points, never ship this binary");
+    // Before serving anyone: finish or record any rollback a crash interrupted. Never fatal (bootability does
+    // not depend on it, and a broken journal must not take the broker down).
+    match ops::recovery::reconcile_all() {
+        Ok(notes) => notes.iter().for_each(|n| println!("reconcile: {n}")),
+        Err(e) => eprintln!("reconcile failed: {e:#}"),
+    }
+    println!("torchd {VERSION} listening on {SOCKET_PATH}");
     // ponytail: one client at a time; ops are long (pacman) and must not interleave anyway.
     let mut tokens = tokens::Tokens::default();
     for stream in listener.incoming() {
@@ -181,6 +198,11 @@ fn handle_client(stream: UnixStream, tokens: &mut tokens::Tokens) -> Result<()> 
 }
 
 fn run_op(op: &str, args: &serde_json::Value) -> Result<String> {
+    // While a rollback waits for its reboot, anything that changes the root would land in the root being
+    // discarded (owner decision 2). snapshot.rollback checks this itself, with a more specific message.
+    if matches!(op, "package.install" | "package.remove" | "package.install_file" | "system.upgrade" | "kernel.install") {
+        ops::recovery::refuse_if_pending()?;
+    }
     match op {
         "snapshot.create" => ops::snapshot::create(args),
         "snapshot.rollback" => ops::snapshot::rollback(args),

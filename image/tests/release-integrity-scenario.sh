@@ -68,7 +68,8 @@ mkpkg() {
   # shellcheck disable=SC2046  # fixture member names have no spaces
   (cd $d && shopt -s dotglob && bsdtar --zstd -cf $W/pkgs/$1 .PKGINFO $(printf "%s\n" * | grep -vx .PKGINFO))
 }
-mkpkg A torch-cli 1.0-1 a; mkpkg Aold torch-cli 1.0-1 a-older-build; mkpkg B torch-cli 1.1-1 b
+TORCHD="mkdir -p usr/bin; printf 'torchd release build' > usr/bin/torchd"
+mkpkg A torch-cli 1.0-1 a "" "$TORCHD"; mkpkg Aold torch-cli 1.0-1 a-older-build; mkpkg B torch-cli 1.1-1 b
 mkpkg K torchos-keyring 1.0-1 k $W/kr-prod; mkpkg Kt torchos-keyring 1.0-1 k $W/kr-test
 # Trust changes that leave the three keyring files intact:
 mkpkg Kextra torchos-keyring 1.0-1 k $W/kr-prod "cp $W/kr-test/torchos.gpg usr/share/pacman/keyrings/extra.gpg"
@@ -77,6 +78,8 @@ mkpkg Aring torch-cli 1.0-1 a "" "mkdir -p usr/share/pacman/keyrings; cp $W/kr-t
 mkpkg Ascript torch-cli 1.0-1 a "" "echo 'post_install() { pacman-key --add /usr/share/torch-cli/k.gpg; }' > .INSTALL"
 mkpkg Ahook torch-cli 1.0-1 a "" "mkdir -p usr/share/libalpm/hooks
   printf '[Action]\nWhen = PostTransaction\nExec = /usr/bin/pacman-key --lsign-key 0xDEAD\n' > usr/share/libalpm/hooks/k.hook"
+# Marker in the middle of a 4 MiB binary: a pipe into grep -q would stop reading early (SIGPIPE under pipefail).
+mkpkg Afault torch-cli 1.0-1 a "" "mkdir -p usr/bin; { head -c 2M /dev/urandom; printf '\0TORCHD-FAULT-INJECTION-BUILD\0'; head -c 2M /dev/urandom; } > usr/bin/torchd"
 fname() { case $1 in A*) echo torch-cli-1.0-1-any.pkg.tar.zst ;; B) echo torch-cli-1.1-1-any.pkg.tar.zst ;;
   K*) echo torchos-keyring-1.0-1-any.pkg.tar.zst ;; esac; }
 sign() { gpg --homedir $W/$2 --batch --yes --detach-sign --no-armor -o "$1.sig" "$1"; }
@@ -129,6 +132,7 @@ mkrepo $W/case prod A:prod Kscript:prod;      case_repo "keyring package with a 
 mkrepo $W/case prod Aring:prod K:prod;        case_repo "another package installing a keyring"
 mkrepo $W/case prod Ascript:prod K:prod;      case_repo "another package whose install script runs pacman-key"
 mkrepo $W/case prod Ahook:prod K:prod;        case_repo "another package with a pacman hook running pacman-key"
+mkrepo $W/case prod Afault:prod K:prod;       case_repo "torch-cli whose torchd is a fault-injection build"
 rm -rf $W/case; cp -a $W/good $W/case; f=$W/case/"$(fname A)"
 gpg --homedir $W/test --batch --detach-sign --no-armor -o - $f >> $f.sig
                                               case_repo "valid production signature plus a second, test-key signature"
@@ -179,7 +183,7 @@ if publish --publish $DEST && cmp -s $REMOTE/repo/torchos.db $W/next/torchos.db.
 # mkiso <name> <setup command run in the airootfs dir>
 mkiso() {
   local r=$W/iso/$1; rm -rf $r $W/iso/$1.d; mkdir -p $r/etc/ssh $r/usr/share/pacman/keyrings $r/etc/systemd/system/multi-user.target.wants $W/iso/$1.d/arch/x86_64
-  echo torchos > $r/etc/hostname; cp $W/kr-prod/* $r/usr/share/pacman/keyrings/
+  echo torchos > $r/etc/hostname; mkdir -p $r/usr/bin; printf 'torchd release build' > $r/usr/bin/torchd; cp $W/kr-prod/* $r/usr/share/pacman/keyrings/
   (cd $r && eval "$2")
   mksquashfs $r $W/iso/$1.d/arch/x86_64/airootfs.sfs -quiet -noappend >/dev/null
   [[ -n ${MKISO_POST:-} ]] && (cd $W/iso/$1.d/arch/x86_64 && eval "$MKISO_POST")
@@ -198,6 +202,8 @@ iso_refused testkey "cp $W/kr-test/* usr/share/pacman/keyrings/" "keyring trusts
 iso_refused nokeyring "rm usr/share/pacman/keyrings/*" "keyring missing"
 iso_refused optkey "mkdir -p opt/x; echo k > opt/x/authorized_keys" "SSH key outside etc/root/home"
 iso_refused hostkey "echo k > etc/ssh/ssh_host_ed25519_key" "baked-in SSH host private key"
+iso_refused faultinj "printf 'torchd\\0TORCHD-FAULT-INJECTION-BUILD\\0' > usr/bin/torchd" "torchd is a fault-injection build"
+iso_refused notorchd "rm usr/bin/torchd" "no torchd at all"
 MKISO_POST="head -c 300 airootfs.sfs > t && mv t airootfs.sfs" iso_refused corrupt true "truncated (corrupt) airootfs"
 mkiso nossh "rm -r etc/ssh"; if iso nossh; then ok "release ISO without openssh at all passes"; else bad "ISO without etc/ssh"; fi
 

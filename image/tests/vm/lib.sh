@@ -25,7 +25,7 @@ BLANK=image/vm/torchos-test-blank-01.qcow2
 ISO=${ISO:-$(ls -t image/out/*.iso 2>/dev/null | head -1)}
 OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS_TPL=/usr/share/OVMF/OVMF_VARS_4M.fd
-SSH_PORT=2222 VNC_PORT=5901   # fixed: vmssh.sh and vnc.py default to these
+export SSH_PORT=${SSH_PORT:-2222}; VNC_PORT=5901   # vnc.py expects 5901; vmssh.sh and run-qemu.sh read SSH_PORT
 SCEN=${SCEN:-$(basename "$0" .sh)}
 RES=$OUT/results.tsv
 NFAIL=0

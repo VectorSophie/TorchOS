@@ -23,6 +23,10 @@ package_torch-cli() {
   pkgdesc="TorchOS CLI and the torchd privileged broker"
   depends=(snapper pacman systemd)
   install -Dm755 "$srcdir/target/release/torch"  "$pkgdir/usr/bin/torch"
+  # Fault injection is development-only (docs/decisions/0003-recovery-integrity.md §7.1): never package it.
+  if grep -qaF TORCHD-FAULT-INJECTION-BUILD "$srcdir/target/release/torchd"; then
+    echo "torchd was built with the fault-injection feature: refusing to package it" >&2; return 1
+  fi
   install -Dm755 "$srcdir/target/release/torchd" "$pkgdir/usr/bin/torchd"
   install -Dm644 "$srcdir/src/torch/torchd.service" "$pkgdir/usr/lib/systemd/system/torchd.service"
   install -Dm644 "$srcdir/torchd.sysusers" "$pkgdir/usr/lib/sysusers.d/torchd.conf"
