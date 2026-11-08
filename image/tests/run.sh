@@ -12,13 +12,15 @@ fail=0
 if [ $# -eq 0 ]; then
   echo "== static: bash -n"
   for f in image/calamares/usr/lib/torchos/torch-target-setup image/calamares/usr/lib/torchos/torch-target-verify \
-           image/tests/install-steps-scenario.sh image/tests/hyprland-config-scenario.sh image/tests/vm/*.sh; do
+           image/tests/install-steps-scenario.sh image/tests/hyprland-config-scenario.sh image/tests/vm/*.sh \
+           image/scripts/*.sh image/tests/release-integrity-scenario.sh; do
     bash -n "$f" || fail=1
   done
   if command -v shellcheck >/dev/null; then
     echo "== static: shellcheck"
     shellcheck -S warning image/calamares/usr/lib/torchos/torch-target-setup \
-      image/calamares/usr/lib/torchos/torch-target-verify || fail=1
+      image/calamares/usr/lib/torchos/torch-target-verify image/scripts/verify-release.sh \
+      image/scripts/publish-repo.sh || fail=1
   else
     echo "== static: shellcheck not installed, skipped"
   fi
@@ -26,6 +28,8 @@ if [ $# -eq 0 ]; then
   python3 -m unittest discover -s image/tests -p 'test_*.py' || fail=1
   echo "== hyprland: real Hyprland --verify-config on the shipped Lua config (installed + live user)"
   docker run --rm -v "$PWD:/src:ro" archlinux:base-devel bash /src/image/tests/hyprland-config-scenario.sh || fail=1
+  echo "== release integrity: publish gate + release ISO check (disposable keys, mock gh; never reaches GitHub)"
+  docker run --rm -v "$PWD:/src:ro" archlinux:base-devel bash /src/image/tests/release-integrity-scenario.sh || fail=1
 fi
 
 SCENARIOS=${*:-supported bios ext4-root wrong-subvolume encrypted-root mbr-table kernel-missing

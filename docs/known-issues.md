@@ -25,14 +25,15 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 | BIOS install, LUKS, manual partitioning, dual boot, Secure Boot | unsupported / untested; the installer is designed to refuse the first four (not yet VM-verified, below) |
 | real hardware, NVIDIA, suspend/resume | untested |
 | hosted package repo (GitHub release `repo`) | PUBLISHED, pacman sync + signature VERIFIED |
+| publishing gate (`publish-repo.sh` verifies the production key at origin/master; dry run by default) | on branch `fix/torchos-release-integrity`, container-tested with a mock backend; never exercised against GitHub |
 
 ## Installer: what it accepts
 
-> **Status (2026-11-04): VM-VERIFIED, still NOT READY for release.** Built into an ISO from commit 65ca72b and run in
+> **Status: merged to master 2026-11-06 (PR #1); VM-VERIFIED 2026-11-04, not yet released.** Built into an ISO from commit 65ca72b and run in
 > QEMU/OVMF on native Linux: supported install, independent boot, rollback, six rejected configurations (BIOS, swap,
 > ext4, replace, alongside, encryption: refused before any disk write), erase with a second data disk left
 > byte-identical, fallback loader, injected required-step failure. Test-key builds, not published.
-> Report: `docs/verification/2026-11-04-install-correctness-vm.md`. Release was blocked by the Hyprland 0.57 defect below (fixed on its own branch).
+> Report: `docs/verification/2026-11-04-install-correctness-vm.md`. The Hyprland 0.57 defect below that blocked it was fixed by PR #2 (merged 2026-11-06).
 
 The one path tested end to end before this change (earlier ISOs): **UEFI firmware, "Erase disk" on one whole disk, GPT, Btrfs (`@ @home @log @cache
 @snapshots`), no encryption, no swap partition (zram instead).** The change is designed to refuse everything

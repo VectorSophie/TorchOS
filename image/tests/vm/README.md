@@ -56,7 +56,8 @@ A harness failure is not a product failure, and production code should not be be
   an unsigned repo. It lives on the old Windows/WSL machine and isn't in git. Either transfer it securely, or, for
   local verification only, sign with a throwaway key (`TORCHOS_GNUPGHOME`) and, in the working tree only, put its
   public key in `pkg/torchos/keyring/torchos.gpg` and its fingerprint in `torchos-trusted` (`supported.sh` reads the
-  trusted key from there). Never commit that swap; never publish packages signed with a throwaway key.
+  trusted key from there). Never commit that swap. `publish-repo.sh` and `verify-release.sh` refuse a swapped
+  working tree and any test-key-signed repo/ISO: restore with `git checkout -- pkg/torchos/keyring` afterwards.
 
 ```bash
 image/tests/run.sh                                             # static + unit + 25 container scenarios
@@ -65,6 +66,7 @@ DEV_SSH_PUBKEY=~/.ssh/torchos_vm.pub image/scripts/build-iso.sh   # dev ISO: nev
 image/tests/vm/iso-contents.sh
 image/tests/vm/supported.sh && image/tests/vm/rejected.sh && image/tests/vm/existing.sh && image/tests/vm/failure.sh
 image/scripts/build-iso.sh && ISO=<that iso> image/tests/vm/rc-smoke.sh      # release ISO smoke
+image/scripts/verify-release.sh iso <that iso>                 # release gate: refuses test keyring / dev SSH
 ```
 
 ## Cleanup boundaries
