@@ -50,9 +50,13 @@ fn main() -> Result<()> {
     eprintln!("WARNING {FAULT_MARKER}: development build with fault points, never ship this binary");
     // Before serving anyone: finish or record any rollback a crash interrupted. Never fatal (bootability does
     // not depend on it, and a broken journal must not take the broker down).
+    // Errors leave package operations to the pending check (observed from disk) and make rollback refuse.
     match ops::recovery::reconcile_all() {
-        Ok(notes) => notes.iter().for_each(|n| println!("reconcile: {n}")),
-        Err(e) => eprintln!("reconcile failed: {e:#}"),
+        Ok(rep) => {
+            rep.notes.iter().for_each(|n| println!("reconcile: {n}"));
+            rep.errors.iter().for_each(|e| eprintln!("reconcile error: {e}"));
+        }
+        Err(e) => eprintln!("reconcile error: {e:#}"),
     }
     println!("torchd {VERSION} listening on {SOCKET_PATH}");
     // ponytail: one client at a time; ops are long (pacman) and must not interleave anyway.

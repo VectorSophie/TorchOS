@@ -84,24 +84,52 @@ pub fn pending(obs: &Obs, booted: Option<&str>) -> bool {
     }
 }
 
-/// Free metadata space a new subvolume + renames can draw on, from `btrfs filesystem usage -b`:
-/// unallocated space (halved: metadata is DUP on a single disk) plus the unused part of the metadata chunks.
+/// Metadata space a new subvolume and two renames can draw on, from `btrfs filesystem usage -b` (btrfs-progs
+/// v7.3 format, confirmed on the installed VM): unallocated space divided by the metadata ratio (2 for DUP), plus
+/// the unused part of every metadata block group (`Metadata,<profile>:` or mixed `Data+Metadata,<profile>:`), minus
+/// the global reserve, which ordinary operations cannot use. None if any of those fields is missing or malformed.
+/// A heuristic for refusing early, never a promise that the rollback cannot hit ENOSPC (§5.5).
 pub fn metadata_headroom(usage: &str) -> Option<u64> {
-    let num = |s: &str| s.trim().trim_end_matches(',').parse::<u64>().ok();
-    let mut unalloc = None;
-    let mut meta = None;
-    for l in usage.lines() {
-        let l = l.trim();
+    let num = |s: &str| s.split_whitespace().next()?.trim_end_matches(',').parse::<u64>().ok();
+    let (mut unalloc, mut ratio, mut reserve, mut meta) = (None, None, None, None::<u64>);
+    for l in usage.lines().map(str::trim) {
         if let Some(v) = l.strip_prefix("Device unallocated:") {
-            unalloc = num(v);
-        } else if l.starts_with("Metadata,") {
-            let field = |k: &str| l.split(k).nth(1).and_then(|r| num(r.split_whitespace().next()?));
-            if let (Some(size), Some(used)) = (field("Size:"), field("Used:")) {
-                meta = Some(size.saturating_sub(used));
-            }
+            unalloc = Some(num(v)?);
+        } else if let Some(v) = l.strip_prefix("Metadata ratio:") {
+            ratio = Some(v.trim().parse::<f64>().ok().filter(|r| *r >= 1.0)?);
+        } else if let Some(v) = l.strip_prefix("Global reserve:") {
+            reserve = Some(num(v)?);
+        } else if l.starts_with("Metadata,") || l.starts_with("Data+Metadata,") {
+            let field = |k: &str| l.split(k).nth(1).and_then(num);
+            let (size, used) = (field("Size:")?, field("Used:")?);
+            meta = Some(meta.unwrap_or(0) + size.saturating_sub(used));
         }
     }
-    Some(unalloc? / 2 + meta?)
+    let from_unalloc = (unalloc? as f64 / ratio?) as u64;
+    Some((from_unalloc + meta?).saturating_sub(reserve?))
+}
+
+/// The rollback's space preflight. Anything but a readable report with enough headroom refuses: a check that
+/// could not run is not permission to proceed.
+pub fn metadata_preflight(usage: std::io::Result<std::process::Output>, floor: u64) -> Result<u64> {
+    let out = usage.context("refused: cannot run btrfs filesystem usage for the space check. Nothing was changed")?;
+    if !out.status.success() {
+        bail!(
+            "refused: the space check failed (btrfs filesystem usage: {}). Nothing was changed",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    let Some(room) = metadata_headroom(&String::from_utf8_lossy(&out.stdout)) else {
+        bail!("refused: cannot read Btrfs metadata space from btrfs filesystem usage. Nothing was changed");
+    };
+    if room < floor {
+        bail!(
+            "refused: only {} MiB of Btrfs metadata space is left; a rollback could fail part-way. Free space \
+             (delete old snapshots) and retry. Nothing was changed",
+            room >> 20
+        );
+    }
+    Ok(room)
 }
 
 // ---------------------------------------------------------------------------------------------- syscalls
@@ -327,36 +355,67 @@ fn apply(op: &OpView, plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-/// Reconcile every open rollback op. Run at torchd startup and before each rollback. Failures are reported,
-/// never fatal: bootability never depends on this (§5.4).
-pub fn reconcile_all() -> Result<Vec<String>> {
-    let records = journal::read(journal::PATH);
-    let ops = open_ops(&records);
+/// What one reconciliation pass did. `errors` are things this pass could not read, do or record (a retry may
+/// succeed); a rollback is refused while there are any. `ambiguous` outcomes are recorded, never acted on, and
+/// left for the operator: they touch only that op's own names, so they do not block later operations.
+#[derive(Debug, Default)]
+pub struct Report {
+    pub notes: Vec<String>,
+    pub errors: Vec<String>,
+}
+
+/// Reconcile every open rollback op. Run at torchd startup and before each rollback. Err only when the journal or
+/// the subvolume list cannot be read at all. Never fatal at startup: bootability never depends on this (§5.4),
+/// and the pending-rollback refusal is observed from disk, not from the journal.
+pub fn reconcile_all() -> Result<Report> {
+    let j = journal::read(journal::PATH)?;
+    let mut rep = Report::default();
+    if !j.corrupt.is_empty() {
+        rep.errors.push(format!(
+            "{} has unreadable line(s) {:?} that are not a torn last write; a rollback record may be lost. Inspect \
+             it, check `btrfs subvolume list /` for @.torchd-* subvolumes, then move the file aside to continue",
+            journal::PATH,
+            j.corrupt
+        ));
+    }
+    let ops = open_ops(&j.records);
     if ops.is_empty() {
-        return Ok(vec![]);
+        return Ok(rep);
     }
     let obs = observe()?;
     let booted = booted_uuid();
     let boot = boot_id();
-    let mut notes = vec![];
     for op in ops {
         let plan = reconcile(&op, &obs, booted.as_deref(), &boot);
         if plan == Plan::default() {
             continue;
         }
         if let Err(e) = apply(&op, &plan) {
-            notes.push(format!("{}: reconciliation failed: {e:#}", op.op_id));
+            rep.errors.push(format!("{}: reconciliation failed: {e:#}", op.op_id));
             continue;
         }
+        let mut recorded = true;
         for r in &plan.record {
             let facts = json!({"op_id": op.op_id, "kind": "outcome", "result": r, "boot_id": boot,
                 "booted_uuid": booted, "at_uuid": obs.get("@").map(|s| &s.uuid), "by": "reconcile",
                 "torchd_version": crate::VERSION});
-            journal::append(journal::PATH, &facts)?;
+            if let Err(e) = journal::append(journal::PATH, &facts) {
+                rep.errors.push(format!("{}: could not record {r}: {e:#}", op.op_id));
+                recorded = false;
+                break; // later records of this op depend on this one; the next pass decides again from disk
+            }
         }
-        notes.push(format!("{}: {}", op.op_id, plan.record.join(" -> ")));
+        if !recorded {
+            continue;
+        }
+        let what = plan.record.join(" -> ");
+        rep.notes.push(if plan.record.contains(&"ambiguous") {
+            format!("{}: ambiguous: needs operator review; nothing was changed ({})", op.op_id, op.new_name)
+        } else {
+            format!("{}: {what}", op.op_id)
+        });
     }
-    Ok(notes)
+    Ok(rep)
 }
 
 /// Refuse when a rollback is pending (owner decision 2). Fails closed if the state cannot be observed while the
@@ -425,13 +484,83 @@ mod tests {
         assert!(pending(&obs(&[]), Some("U0")), "no @ at all fails closed");
     }
 
+    /// `btrfs filesystem usage -b /.snapshots` on the installed TorchOS VM (btrfs-progs v7.3, 2026-11-09).
+    const VM_USAGE: &str = "Overall:\n    Device size:\t\t       42410668032\n    Device allocated:\t\t        7004487680\n\
+        \x20   Device unallocated:\t\t       35406180352\n    Device missing:\t\t                 0\n\
+        \x20   Device slack:\t\t                 0\n    Used:\t\t\t        4045053952\n\
+        \x20   Free (estimated):\t\t       38103830528\t(min: 20400740352)\n    Free (statfs, df):\t\t       38102753280\n\
+        \x20   Data ratio:\t\t\t              1.00\n    Metadata ratio:\t\t              2.00\n\
+        \x20   Global reserve:\t\t          12189696\t(used: 0)\n    Multiple profiles:\t\t                no\n\n\
+        Data,single: Size:6450839552, Used:3753189376 (58.18%)\n   /dev/vda2\t6450839552\n\n\
+        Metadata,DUP: Size:268435456, Used:145915904 (54.36%)\n   /dev/vda2\t 536870912\n\n\
+        System,DUP: Size:8388608, Used:16384 (0.20%)\n   /dev/vda2\t  16777216\n\nUnallocated:\n   /dev/vda2\t35406180352\n";
+
     #[test]
-    fn metadata_headroom_from_usage() {
-        let u = "Overall:\n    Device size:\t\t 21474836480\n    Device unallocated:\t\t 1073741824\n\
-                 Data,single: Size:8388608000, Used:4000000000 (47.68%)\n\
-                 Metadata,DUP: Size:268435456, Used:100000000 (37.25%)\n";
-        assert_eq!(metadata_headroom(u), Some(1073741824 / 2 + 268435456 - 100000000));
+    fn metadata_headroom_from_the_installed_vm() {
+        assert_eq!(metadata_headroom(VM_USAGE), Some(35406180352 / 2 + (268435456 - 145915904) - 12189696));
+    }
+
+    #[test]
+    fn metadata_headroom_other_profiles() {
+        let single = VM_USAGE.replace("Metadata ratio:\t\t              2.00", "Metadata ratio:\t\t              1.00")
+            .replace("Metadata,DUP", "Metadata,single");
+        assert_eq!(metadata_headroom(&single), Some(35406180352 + (268435456 - 145915904) - 12189696));
+        let raid1c3 = VM_USAGE.replace("2.00", "3.00").replace("Metadata,DUP", "Metadata,RAID1C3");
+        assert_eq!(metadata_headroom(&raid1c3), Some(35406180352 / 3 + (268435456 - 145915904) - 12189696));
+        let mixed = VM_USAGE.replace("Metadata,DUP", "Data+Metadata,single");
+        assert_eq!(metadata_headroom(&mixed), Some(35406180352 / 2 + (268435456 - 145915904) - 12189696));
+        // during a profile conversion both block-group kinds exist: their free space adds up
+        let converting = VM_USAGE.replace(
+            "System,DUP",
+            "Metadata,single: Size:1073741824, Used:73741824 (6.87%)\n   /dev/vda2\t1073741824\n\nSystem,DUP",
+        );
+        assert_eq!(
+            metadata_headroom(&converting),
+            Some(35406180352 / 2 + (268435456 - 145915904) + 1_000_000_000 - 12189696)
+        );
+    }
+
+    #[test]
+    fn metadata_headroom_missing_or_malformed_fields_are_none() {
+        assert_eq!(metadata_headroom(""), None);
         assert_eq!(metadata_headroom("garbage"), None);
+        for line in ["    Device unallocated:", "    Metadata ratio:", "    Global reserve:", "Metadata,DUP:"] {
+            let without: String =
+                VM_USAGE.lines().filter(|l| !l.starts_with(line)).map(|l| format!("{l}\n")).collect();
+            assert_eq!(metadata_headroom(&without), None, "without {line:?}");
+        }
+        for (from, to) in [
+            ("35406180352\n", "35.4GiB\n"),                          // not -b output
+            ("Used:145915904", "Used:abc"),
+            ("              2.00", "              0.00"),            // nonsense ratio
+            ("          12189696\t(used: 0)", "\t(used: 0)"),
+        ] {
+            assert_eq!(metadata_headroom(&VM_USAGE.replacen(from, to, 1)), None, "{from} -> {to}");
+        }
+    }
+
+    fn out(code: i32, stdout: &str) -> std::io::Result<std::process::Output> {
+        use std::os::unix::process::ExitStatusExt;
+        let status = std::process::ExitStatus::from_raw(code << 8);
+        Ok(std::process::Output { status, stdout: stdout.into(), stderr: b"ERROR: boom".to_vec() })
+    }
+
+    #[test]
+    fn metadata_preflight_fails_closed() {
+        const FLOOR: u64 = 256 << 20;
+        assert!(metadata_preflight(out(0, VM_USAGE), FLOOR).is_ok());
+        // Regression: each of these used to let the rollback proceed.
+        let spawn = metadata_preflight(Err(std::io::Error::from(std::io::ErrorKind::NotFound)), FLOOR);
+        assert!(format!("{:#}", spawn.unwrap_err()).contains("refused"));
+        let e = metadata_preflight(out(1, VM_USAGE), FLOOR).unwrap_err().to_string();
+        assert!(e.contains("refused") && e.contains("boom"), "{e}");
+        let e = metadata_preflight(out(0, "garbage"), FLOOR).unwrap_err().to_string();
+        assert!(e.contains("refused: cannot read"), "{e}");
+        // low space: unallocated gone, metadata nearly full
+        let low = VM_USAGE.replace("unallocated:\t\t       35406180352", "unallocated:\t\t                 0")
+            .replace("Used:145915904", "Used:200000000");
+        let e = metadata_preflight(out(0, &low), FLOOR).unwrap_err().to_string();
+        assert!(e.contains("only 53 MiB"), "{e}");
     }
 
     // One test per row of the §5.2 table.

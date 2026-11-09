@@ -71,11 +71,14 @@ impl Op {
         v["ts"] = json!(utc_compact());
         journal::append(journal::PATH, &v)
     }
-    fn outcome(&mut self, result: &str, detail: &str) {
+    /// Record an outcome; on failure say so and return the error text (callers report it, never hide it).
+    fn outcome(&mut self, result: &str, detail: &str) -> Option<String> {
         let r = json!({"kind": "outcome", "result": result, "detail": detail, "boot_id": recovery::boot_id()});
-        if let Err(e) = self.rec(r) {
-            eprintln!("journal: could not record outcome {result} for {}: {e:#}", self.id);
+        let e = self.rec(r).err().map(|e| format!("{e:#}"));
+        if let Some(e) = &e {
+            eprintln!("journal: could not record outcome {result} for {}: {e}", self.id);
         }
+        e
     }
 }
 
@@ -90,8 +93,10 @@ pub fn rollback(args: &serde_json::Value) -> Result<String> {
     device_from_findmnt(String::from_utf8_lossy(&root.stdout).trim()).context("cannot determine the root device")?;
 
     // Finish or record whatever an interrupted earlier rollback left, then look at the disk as it is now.
-    for n in recovery::reconcile_all().context("reconciling earlier rollbacks")? {
-        eprintln!("reconcile: {n}");
+    let rep = recovery::reconcile_all().context("refused: cannot read the state of earlier rollbacks")?;
+    rep.notes.iter().for_each(|n| eprintln!("reconcile: {n}"));
+    if !rep.errors.is_empty() {
+        bail!("refused: an earlier rollback could not be reconciled: {}. Nothing was changed", rep.errors.join("; "));
     }
     let obs = recovery::observe()?;
     let booted = recovery::booted_uuid().context("cannot read the running root's subvolume UUID")?;
@@ -100,15 +105,10 @@ pub fn rollback(args: &serde_json::Value) -> Result<String> {
     }
     let u0 = obs.get("@").context("no @ subvolume on the top level")?.uuid.clone();
     let src_uuid = recovery::uuid_of(&src).context("cannot read the snapshot's UUID")?;
-    let usage = Command::new("btrfs").args(["filesystem", "usage", "-b", "/.snapshots"]).output()?;
-    let room = recovery::metadata_headroom(&String::from_utf8_lossy(&usage.stdout));
-    if room.is_some_and(|r| r < METADATA_FLOOR) {
-        bail!(
-            "refused: only {} MiB of Btrfs metadata space is left; a rollback could fail part-way. Free space \
-             (delete old snapshots) and retry. Nothing was changed",
-            room.unwrap_or(0) >> 20
-        );
-    }
+    recovery::metadata_preflight(
+        Command::new("btrfs").args(["filesystem", "usage", "-b", "/.snapshots"]).output(),
+        METADATA_FLOOR,
+    )?;
 
     let op_id = format!("r-{}-{}", utc_compact(), &uuid::Uuid::new_v4().simple().to_string()[..6]);
     let (new_name, prev_name) = (format!("@.torchd-{op_id}.new"), format!("@.torchd-{op_id}.prev"));
@@ -135,8 +135,12 @@ pub fn rollback(args: &serde_json::Value) -> Result<String> {
         op.outcome("failed", "cannot read the copy's UUID");
         bail!("could not read the new copy's UUID; nothing was changed");
     };
-    op.rec(json!({"kind": "step", "step": "created", "new_uuid": un}))
-        .context("journal write failed after creating the copy; the current system is unchanged")?;
+    if let Err(e) = op.rec(json!({"kind": "step", "step": "created", "new_uuid": un})) {
+        // Without this record a crash later would leave less to go on: stop now, before anything boots differently.
+        let cleanup = run("btrfs", &["subvolume", "delete", &new]).map(|_| "removed").unwrap_or("left for reconciliation");
+        op.outcome("failed", &format!("journal: {e:#}"));
+        bail!("could not journal the new copy ({e:#}); nothing was changed (the copy was {cleanup})");
+    }
     fault("created");
 
     // 2. One atomic exchange: @ is the old or the new tree in every committed state, never missing.
@@ -145,13 +149,20 @@ pub fn rollback(args: &serde_json::Value) -> Result<String> {
         op.outcome("failed", &format!("exchange: {e}"));
         bail!("could not swap in the snapshot ({e}); nothing was changed (the copy was {cleanup})");
     }
-    let _ = op.rec(json!({"kind": "step", "step": "exchanged"}));
+    // From here @ is the new tree (in memory at least). Journal failures no longer stop anything: reconciliation
+    // works from what is on disk. They are collected and reported, never hidden.
+    let mut unjournaled = vec![];
+    if let Err(e) = op.rec(json!({"kind": "step", "step": "exchanged"})) {
+        unjournaled.push(format!("exchanged: {e:#}"));
+    }
     fault("exchanged");
 
     // 3. Give the old root its keep-name. Failing here is harmless: @ is already the new root.
     let kept = match recovery::rename_noreplace(&new, &prev) {
         Ok(()) => {
-            let _ = op.rec(json!({"kind": "step", "step": "renamed"}));
+            if let Err(e) = op.rec(json!({"kind": "step", "step": "renamed"})) {
+                unjournaled.push(format!("renamed: {e:#}"));
+            }
             prev_name.clone()
         }
         Err(e) => {
@@ -163,18 +174,29 @@ pub fn rollback(args: &serde_json::Value) -> Result<String> {
 
     // 4. Durable before it is reported. Without this a power cut could silently undo the swap.
     if let Err(e) = recovery::sync_fs(super::recovery::TOP_MOUNT) {
-        op.outcome("unknown", &format!("syncfs: {e}"));
+        let rec = op.outcome("unknown", &format!("syncfs: {e}")).map_or(String::new(), |j| format!(" (and the journal could not record this: {j})"));
         bail!(
-            "the swap was made but could not be committed to disk ({e}). Reboot: the system starts on either the \
-             old or the new root, and the state is reconciled when torchd starts"
+            "the swap was made in memory but could not be committed to disk ({e}){rec}. Reboot: the system starts on \
+             either the old or the new root, and torchd reconciles the state when it starts"
         );
     }
-    op.outcome("prepared", "");
+    if let Some(e) = op.outcome("prepared", "") {
+        unjournaled.push(format!("prepared: {e}"));
+    }
     fault("prepared");
+    let journal = if unjournaled.is_empty() {
+        "recorded in the journal".to_string()
+    } else {
+        format!(
+            "NOT fully recorded in the journal ({}); torchd reconciles it from what is on disk when it next starts",
+            unjournaled.join("; ")
+        )
+    };
+    // Claims only what is known now: exchanged and committed. That the new root boots is checked after the reboot.
     Ok(format!(
-        "rollback to snapshot {id} prepared and committed to disk: reboot to complete it. Until then, package, \
-         upgrade and kernel operations are refused. The previous system is kept as {kept}; /home, logs and caches \
-         are unchanged"
+        "rollback to snapshot {id} prepared: the swap is committed to disk and {journal}. Reboot to complete it; \
+         torchd checks that the new root is running when it starts. Until then, package, upgrade and kernel \
+         operations are refused. The previous system is kept as {kept}; /home, logs and caches are unchanged"
     ))
 }
 
@@ -203,6 +225,17 @@ fn fault(point: &str) {
 }
 #[cfg(not(feature = "fault-injection"))]
 fn fault(_point: &str) {}
+
+/// Development-only: `/run/torchd/fault` line `journal-fail:<name>` makes the journal write of that record fail
+/// (`intent`, a step such as `created`, or an outcome such as `prepared`).
+#[cfg(feature = "fault-injection")]
+pub fn journal_fault(record: &serde_json::Value) -> bool {
+    let name = ["step", "result", "kind"].iter().find_map(|k| record[*k].as_str()).unwrap_or_default().to_string();
+    std::fs::read_to_string("/run/torchd/fault")
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.trim().strip_prefix("journal-fail:") == Some(name.as_str()))
+}
 
 fn run(cmd: &str, args: &[&str]) -> Result<()> {
     let out = Command::new(cmd).args(args).output().with_context(|| format!("running {cmd}"))?;

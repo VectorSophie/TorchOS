@@ -4,12 +4,12 @@
 # Each case runs on a fresh qcow2 overlay of supported.sh's image/vm/A-installed.qcow2 (+ image/vm/A-installed.vars),
 # whose torchd is the pre-R-A one from that ISO. This working tree's torchd is built in a container (release build and
 # a fault-injection build) and copied over /usr/bin/torchd on the overlay only; no package or ISO ever carries it.
-# Power cut = QEMU monitor `quit` while torchd is paused at a fault point. Cases: F1 F2 F3 F4 F5 F12 F14 F13 F13b
-# (RA_CASES to choose).
+# Power cut = QEMU monitor `quit` while torchd is paused at a fault point. Cases: F1 F2 F3 F4 F5 F12 F14 F13 F13b, and
+# the journal-damage cases J1-J6 (RA_CASES to choose).
 source "$(dirname "$0")/lib.sh"
 BASE="A-installed.qcow2"; BVARS=image/vm/A-installed.vars
 [ -f "image/vm/$BASE" ] && [ -f "$BVARS" ] || { echo "run supported.sh first (image/vm/$BASE, $BVARS)" >&2; exit 2; }
-CASES=${RA_CASES:-F1 F2 F3 F4 F5 F12 F14 F13 F13b}
+CASES=${RA_CASES:-F1 F2 F3 F4 F5 F12 F14 F13 F13b J1 J2 J3 J4 J5 J6}
 BIN=image/build/ra; mkdir -p "$BIN"
 
 echo "== building torchd from this tree (release + fault-injection) ($(ts))"
@@ -38,7 +38,9 @@ case $1 in
     mkdir -p /run/ra && mount -o subvolid=5 "$(findmnt -no SOURCE / | sed 's/\[.*//')" /run/ra &&
       btrfs subvolume snapshot "/.snapshots/$2/snapshot" /run/ra/@.rollback-new >/dev/null && umount /run/ra && echo legacy-made ;;
   journal) cat /var/log/torchd/journal.jsonl 2>/dev/null ;;
-  rollback) printf 'y\n' | torch snapshot rollback "$2"; echo "rc=$?" ;;
+  rollback) printf 'y\n' | torch snapshot rollback "$2" 2>&1; echo "rc=$?" ;;
+  torn)     printf '{"op_id":"r-torn","kind":"inte' >> /var/log/torchd/journal.jsonl && echo torn-written ;;
+  corrupt)  printf '{"op_id":"r-x","kind":"outcome","result":"verified"}\n{garbage\n' >> /var/log/torchd/journal.jsonl && echo corrupt-written ;;
 esac
 EOF
 )
@@ -100,6 +102,9 @@ crash_at() {
   echo "after: booted=$(val booted "$F") names: $(names "$F") results: $(val results "$F")"
 }
 no_temporaries() { ! grep -qE '^name @\.torchd-.*\.new ' <<<"$1"; }
+no_torchd_names() { ! grep -qE '^name @\.torchd-' <<<"$1"; }
+fault_set() { isudo "sh -c 'printf \"$1\" > /run/torchd/fault'"; }   # fault_set '<line>\n<line>'
+startup_log() { isudo 'journalctl -u torchd -b --no-pager -o cat' | tail -20; }
 
 for c in $CASES; do
   echo "== $c ($(ts))"
@@ -152,7 +157,7 @@ for c in $CASES; do
     setup $c "$BIN/torchd"
     if [ $c = F14 ]; then
       RB=$(inst "bash /tmp/rag.sh rollback $N"); echo "$RB"
-      assert "F14: rollback prepared" has 'prepared and committed to disk' "$RB"
+      assert "F14: rollback prepared" has 'prepared: the swap is committed to disk and recorded' "$RB"
       PKG0=$(inst 'pacman -Q | sha256sum'); AT0=$(name_uuid @ "$(g facts)")
       for cmd in 'torch update tree' 'torch remove nano' 'torch update' 'torch kernel add linux-zen' "torch snapshot rollback $N"; do
         R=$(inst "printf 'y\ny\n' | $cmd 2>&1; echo rc=\$?"); echo "$cmd -> $(tail -2 <<<"$R" | tr '\n' ' ')"
@@ -164,7 +169,7 @@ for c in $CASES; do
       F0=$(g facts)   # the extra snapshot is expected from here on
     else
       RB=$(inst "bash /tmp/rag.sh rollback $N"); echo "$RB"
-      assert "F12: rollback rc 0, committed" sh -c 'printf "%s\n" "$1" | grep -q "^rc=0$" && printf "%s\n" "$1" | grep -q "committed to disk"' _ "$RB"
+      assert "F12: rollback rc 0, committed" sh -c 'printf "%s\n" "$1" | grep -q "^rc=0$" && printf "%s\n" "$1" | grep -q "committed to disk and recorded in the journal"' _ "$RB"
     fi
     reboot_wait || abort "$c: rebooted after the rollback"
     F=$(g facts); echo "$F" > "$OUT/RA-$c-after.txt"; g journal > "$OUT/RA-$c-journal.jsonl"
@@ -205,6 +210,74 @@ for c in $CASES; do
     fi
     assert "$c: previous root kept (U0)" sh -c 'printf "%s\n" "$1" | grep -qE "^name @\.torchd-.*\.prev $2$"' _ "$F" "$U0"
     inst sync; stop_vm ;;
+  J1)  # torn last line (crash mid-write), then a rollback that crashes after its intent
+    setup J1 "$BIN/torchd-fi"
+    assert "J1: torn tail written" has torn-written "$(g torn)"
+    crash_at J1 intent:nosync
+    assert "J1: old root booted (U0)" test "$(val booted "$F")" = "$U0"
+    assert "J1: the intent written after the torn line was kept and reconciled" test "$(val results "$F")" = "recovered-not-applied "
+    assert "J1: torn line terminated and marked by a repair record" has '"kind":"repair"' "$(g journal)"
+    assert "J1: startup reported no reconcile error" lacks 'reconcile error' "$(startup_log)"
+    invariants J1 "$F"; inst sync; stop_vm ;;
+  J2)  # journal write of the created step fails: stop before the exchange and remove the copy
+    setup J2 "$BIN/torchd-fi"; fault_set 'journal-fail:created\n'
+    RB=$(inst "bash /tmp/rag.sh rollback $N"); echo "$RB"
+    assert "J2: rollback refused" has '^rc=[1-9]' "$RB"
+    assert "J2: reports nothing changed and the copy removed" has 'nothing was changed \(the copy was removed\)' "$RB"
+    F=$(g facts); echo "$F" > "$OUT/RA-J2-after.txt"
+    assert "J2: @ is still U0" test "$(name_uuid @ "$F")" = "$U0"
+    assert "J2: no @.torchd-* subvolume left" no_torchd_names "$F"
+    assert "J2: journal outcome failed" test "$(val results "$F")" = "failed "
+    invariants J2 "$F"; inst sync; stop_vm ;;
+  J3)  # journal writes after the exchange fail (exchanged step and prepared outcome)
+    setup J3 "$BIN/torchd-fi"; fault_set 'journal-fail:exchanged\njournal-fail:prepared\n'
+    RB=$(inst "bash /tmp/rag.sh rollback $N"); echo "$RB"
+    assert "J3: rollback rc 0" has '^rc=0$' "$RB"
+    assert "J3: says committed to disk but NOT fully recorded" has 'committed to disk and NOT fully recorded in the journal' "$RB"
+    assert "J3: names the unrecorded records" has 'exchanged: .*prepared: ' "$RB"
+    assert "J3: pending refusal still holds (observed from disk)" has 'rollback is pending' "$(inst "printf 'y\n' | torch remove nano 2>&1")"
+    isudo 'rm -f /run/torchd/fault'
+    reboot_wait || abort "J3: rebooted"
+    F=$(g facts); echo "$F" > "$OUT/RA-J3-after.txt"; g journal > "$OUT/RA-J3-journal.jsonl"
+    assert "J3: rollback applied (probe absent)" test "$(val probe-root "$F")" = absent
+    assert "J3: journal recovered-prepared -> verified (no prepared record)" test "$(val results "$F")" = "recovered-prepared verified "
+    assert "J3: previous root kept as .prev (U0)" sh -c 'printf "%s\n" "$1" | grep -qE "^name @\.torchd-.*\.prev $2$"' _ "$F" "$U0"
+    invariants J3 "$F"; inst sync; stop_vm ;;
+  J4)  # the intent cannot be written: nothing happens
+    setup J4 "$BIN/torchd-fi"; fault_set 'journal-fail:intent\n'
+    RB=$(inst "bash /tmp/rag.sh rollback $N"); echo "$RB"
+    assert "J4: refused, nothing changed" has 'cannot write the operation journal. Nothing was changed' "$RB"
+    F=$(g facts)
+    assert "J4: @ is still U0" test "$(name_uuid @ "$F")" = "$U0"
+    assert "J4: no @.torchd-* subvolume" no_torchd_names "$F"
+    invariants J4 "$F"; inst sync; stop_vm ;;
+  J5)  # a corrupt line in the middle of the journal: fail closed for rollback, keep serving, operator path works
+    setup J5 "$BIN/torchd"
+    assert "J5: corrupt line written" has corrupt-written "$(g corrupt)"
+    isudo 'systemctl restart torchd'; sleep 2
+    assert "J5: torchd still starts and serves (torch status)" inst 'torch status >/dev/null'
+    assert "J5: startup reports the unreadable line" has 'reconcile error: .*unreadable line' "$(startup_log)"
+    RB=$(inst "bash /tmp/rag.sh rollback $N"); echo "$RB"
+    assert "J5: rollback refused while the journal is corrupt" has 'refused: an earlier rollback could not be reconciled.*unreadable line' "$RB"
+    assert "J5: @ unchanged by the refused rollback" test "$(name_uuid @ "$(g facts)")" = "$U0"
+    isudo 'mv /var/log/torchd/journal.jsonl /var/log/torchd/journal.jsonl.inspected'
+    RB=$(inst "bash /tmp/rag.sh rollback $N"); echo "$RB"
+    assert "J5: after the operator moves the journal aside, the rollback works" has '^rc=0$' "$RB"
+    reboot_wait || abort "J5: rebooted"
+    F=$(g facts)
+    assert "J5: journal prepared -> verified" test "$(val results "$F")" = "prepared verified "
+    invariants J5 "$F"; inst sync; stop_vm ;;
+  J6)  # the journal cannot be read at all (a directory in its place stands in for EIO)
+    setup J6 "$BIN/torchd"
+    isudo 'sh -c "rm -f /var/log/torchd/journal.jsonl; mkdir /var/log/torchd/journal.jsonl; systemctl restart torchd"'; sleep 2
+    assert "J6: torchd still starts and serves (torch status)" inst 'torch status >/dev/null'
+    assert "J6: startup reports the unreadable journal" has 'reconcile error: reading journal' "$(startup_log)"
+    RB=$(inst "bash /tmp/rag.sh rollback $N"); echo "$RB"
+    assert "J6: rollback refused" has 'refused: cannot read the state of earlier rollbacks' "$RB"
+    F=$(g facts)
+    assert "J6: @ unchanged" test "$(name_uuid @ "$F")" = "$U0"
+    assert "J6: no @.torchd-* subvolume" no_torchd_names "$F"
+    invariants J6 "$F"; inst sync; stop_vm ;;
   esac
 done
 finish
