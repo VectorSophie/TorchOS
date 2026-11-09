@@ -10,8 +10,9 @@
 >   orders and byte-checks the upload. `verify-release.sh iso` checks a release ISO's contents. Design and remaining
 >   limits: `docs/decisions/0002-release-integrity.md`.
 > - **Recovery integrity** (`docs/decisions/0003-recovery-integrity.md`): F0 passed, R2 reproduced (`grub rescue>`), and R-A (atomic
->   exchange, journal, reconciliation, pending refusal) implemented and VM fault-injected:
->   `docs/verification/2026-11-08-recovery-ra-vm.md`. R-B to R-E not started. After it: the experience layer. AI is later and optional.
+>   exchange, journal, reconciliation, pending refusal) merged (PR #4):
+>   `docs/verification/2026-11-08-recovery-ra-vm.md`. R-D (safe GRUB configuration) in review:
+>   `docs/verification/2026-11-09-recovery-rd-vm.md`. R-B, R-C, R-E not started. After it: the experience layer. AI is later and optional.
 > - **Still not release-ready:** no production-key build since 2026-09-28, no real hardware, LUKS/BIOS/dual boot/
 >   Secure Boot unsupported. The production signing key is only on the Windows/WSL machine; this Linux host has none.
 >

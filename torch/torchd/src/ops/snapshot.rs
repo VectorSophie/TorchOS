@@ -204,7 +204,7 @@ pub fn rollback(args: &serde_json::Value) -> Result<String> {
 /// `after:<point>[:sync]`; at that point torchd optionally commits the filesystem, announces PAUSED, and blocks
 /// so the test harness can cut the power.
 #[cfg(feature = "fault-injection")]
-fn fault(point: &str) {
+pub(crate) fn fault(point: &str) {
     let spec = std::fs::read_to_string("/run/torchd/fault").unwrap_or_default();
     for line in spec.lines() {
         let Some(rest) = line.trim().strip_prefix("after:") else { continue };
@@ -224,7 +224,7 @@ fn fault(point: &str) {
     }
 }
 #[cfg(not(feature = "fault-injection"))]
-fn fault(_point: &str) {}
+pub(crate) fn fault(_point: &str) {}
 
 /// Development-only: `/run/torchd/fault` line `journal-fail:<name>` makes the journal write of that record fail
 /// (`intent`, a step such as `created`, or an outcome such as `prepared`).

@@ -167,7 +167,27 @@ recovery path the docs promise does not work, or reported state is false. **S3**
 - *Also noted:* `/boot/grub/x86_64-efi` (GRUB modules) is written only by `grub-install` at install time, so every
   snapshot shares the ESP core's module set. **Nothing may ever run `grub-install` after installation** without
   solving module/core skew across snapshots. That is a constraint, not a defect today.
-- *Reproduced?* No.
+- *Reproduced? (R-D, 2026-11-09, installed VM, grub 2:2.16-1, grub-btrfs 4.14-1; `image/tests/vm/grub-rd-repro.sh`,
+  evidence `docs/verification/2026-11-09-recovery-rd-vm.md`)*
+  - **Empty `grub.cfg` → unbootable: confirmed** (H1d). The committed truncated state that `cat new > grub.cfg`
+    passes through gives a bare `grub>` prompt: no menu, no snapshot entries. *Reaching* that state through a real
+    power cut was **not** reproduced: a cut with no commit kept the old file (H1a), and a cut after the periodic
+    commit had the new file complete (H1c). On Btrfs a commit must land between the truncating open and the write;
+    that is rare, not impossible (and ENOSPC during the `cat` is untested).
+  - **A failed generation does not touch the live file: disproved as a defect** (H2): a failing `/etc/grub.d`
+    script or a syntax error makes grub-mkconfig exit 1 with `grub.cfg` byte-identical (it leaves `grub.cfg.new`).
+  - **Snapshot menu lost by an interrupted grub-btrfs run: confirmed** (H3): with a commit inside its 0.4 s window
+    the menu is gone after the cut, the main entry boots, and grub-btrfsd does **not** regenerate it at start
+    (it only watches). It comes back only at the next snapshot. Optional entries only, but it is the recovery menu.
+  - **Parseable but unbootable configuration accepted: confirmed** (H4): a `/etc/grub.d` script emitting a default
+    entry with a missing kernel and another root UUID passed grub-mkconfig and grub-script-check, became the default,
+    and the VM did not come up (the real entry still works when picked by hand).
+  - **Missing files:** grub-mkconfig only lists kernels that exist, and takes the UUID from grub-probe, so a missing
+    kernel or wrong UUID from upstream generators alone is hypothetical. A missing **initramfs** is real (H5): 10_linux
+    then emits the default entry with no `initrd` and `root=/dev/vda2` instead of `root=UUID=`; script-check passes.
+    This VM still booted it (its kernel mounts the root without an initramfs), so on this VM it is a degraded entry,
+    not an unbootable one; on hardware that needs the initramfs, or where device names change, it would not boot.
+    Separately, `package.remove` of a kernel leaves `grub.cfg` pointing at it (not regenerated; untested).
 - *Correction:* `torchd` regenerates through one helper:
   1. `grub-mkconfig -o /boot/grub/grub.cfg.candidate`. Upstream's `cat` then targets the candidate, not the live file.
   2. Validate: `grub-script-check`; every `linux`/`initrd` path in a menuentry exists under `/boot`; a menuentry for
@@ -175,7 +195,17 @@ recovery path the docs promise does not work, or reported state is false. **S3**
   3. `fsync` the candidate.
   4. Hard-link or copy the current file to `grub.cfg.prev` and `fsync` it.
   5. `rename(candidate, grub.cfg)` and `fsync /boot/grub`.
-  On failure the live file is untouched and the op reports failure. For `grub-btrfs.cfg`: `torchd` at startup
+  On failure the live file is untouched and the op reports failure.
+  *As built (R-D):* `torchd/src/ops/grubcfg.rs`. The candidate is `grub.cfg.torchd-new`; validation adds, per boot
+  entry, an `initrd` line whose files exist and `rootflags=subvol=@`, every `search --fs-uuid` naming this filesystem,
+  the default entry first, and GRUB's own btrfs driver (`grub-fstest cmp`) reading the default entry's kernel and
+  initrds completely. A rejected candidate is kept as `grub.cfg.torchd-rejected`. Durability: `syncfs` after
+  generation (before validation, so grub-fstest reads committed data) and after the rename (equivalent to fsyncing
+  `/boot/grub` on Btrfs, which commits the whole transaction). `grub.cfg.prev` is a hard link to the replaced file,
+  installed with one rename. At startup `torchd` also puts `grub.cfg.prev` back if `grub.cfg` is missing, empty or
+  unparseable (only reachable when something else wrote it: an older torchd, a hand-run grub-mkconfig). A system
+  that already stops at `grub>` cannot be repaired by torchd; by hand: `configfile /@/boot/grub/grub.cfg.prev`
+  (untested). Nothing runs `grub-install` or touches the ESP. In a snapshot boot regeneration is refused. For `grub-btrfs.cfg`: `torchd` at startup
   regenerates it if it is missing or fails `grub-script-check`. Doctor reports the state. Upstream grub-btrfs is
   not patched.
 - *Test:* F6 (corrupt the candidate generator via a broken `/etc/grub.d/` script: the live file stays

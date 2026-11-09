@@ -32,8 +32,8 @@ prioritized open work, and the test-harness gotchas. This file keeps the durable
   review findings, and the build/signing blockers for the next publish: `docs/decisions/0002-release-integrity.md`.
 - **Recovery Integrity**: design `docs/decisions/0003-recovery-integrity.md` (audit R1-R8, rollback state machine,
   journal, GRUB replacement, retention, VM fault matrix, PRs R-A to R-E). F0 passed; **R-A (crash-safe rollback core)
-  implemented**, VM fault-injected (`docs/verification/2026-11-08-recovery-ra-vm.md`). R-B to R-E each need a
-  separate review first. After that comes the experience layer. AI is later, optional, and gets no implicit authority.
+  merged** (PR #4, 2026-11-09; `docs/verification/2026-11-08-recovery-ra-vm.md`). **R-D (safe GRUB configuration) in
+  review** on `feat/recovery-integrity-rd` (`docs/verification/2026-11-09-recovery-rd-vm.md`). R-B, R-C, R-E not started. After that comes the experience layer. AI is later, optional, and gets no implicit authority.
 - Direction spec: `docs/superpowers/specs/2026-11-02-torchos-direction.md`. Where it conflicts with the locked
   table below, the table governs until the owner updates it.
 - Not release-ready: every 2026-11 build was signed with an isolated **test** key. The production key
@@ -140,7 +140,7 @@ Priority order, always: **Convenience > Compatibility > Reliability > Recoverabi
       `torchos-keyring` + sign/publish scripts (published 2026-09-28 as GitHub release `repo`); `torch doctor` live/snapshot-boot aware.
 - [x] Installation correctness (PR #1) + Hyprland 0.57 Lua (PR #2): merged 2026-11-06, VM-verified (test-key builds)
 - [x] Release integrity (publish gate, release-ISO check): PR #3 merged 2026-11-08
-- [~] Recovery integrity: design `docs/decisions/0003-recovery-integrity.md` approved (revised); F0 passed; R-A done (VM fault-injected); R-B..R-E open
+- [~] Recovery integrity: design `docs/decisions/0003-recovery-integrity.md` approved (revised); F0 passed; R-A merged; R-D in review; R-B, R-C, R-E open
 - [ ] Phase 3: AI assistant (Agent SDK + MCP) wired to `torchd`
 - [x] Phase 4: `torch install` resolver — repo → Flathub → gated AUR → Distrobox, plus files (.pkg.tar.zst,
       .AppImage, .flatpakref, .exe/.msi, .deb, .rpm). Repo/AUR/AppImage/Distrobox verified in the VM; Flatpak

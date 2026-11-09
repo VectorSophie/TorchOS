@@ -54,6 +54,7 @@ pub fn install(args: &serde_json::Value) -> Result<String> {
     pacman(&["-Syu", "--needed"], &pkgs)?;
     // Arch does not regenerate grub.cfg when a new kernel appears; the default entry stays `linux`
     // (GRUB_TOP_LEVEL, set at install time), the new kernel is under Advanced options.
-    run("grub-mkconfig", &["-o", "/boot/grub/grub.cfg"])?;
+    super::grubcfg::regenerate()
+        .with_context(|| format!("{} is installed, but GRUB was not updated", args.name))?;
     Ok(format!("{} installed; pick it under GRUB's Advanced options on the next boot", args.name))
 }
