@@ -5,12 +5,12 @@
 >   Compatibility*. Both are VM-verified in QEMU/OVMF with **test-key** builds that were never published. Evidence:
 >   `docs/verification/2026-11-04-*.md`. (The 2026-11-02 note that called install-correctness "NOT READY, VM
 >   verification still to run" is superseded.)
-> - **In review:** `fix/torchos-release-integrity`. `publish-repo.sh` now verifies the exact upload set against
->   the production key committed at `origin/master`, is a dry run unless given `--publish OWNER/REPO`, and orders
->   uploads to survive interruption. `verify-release.sh iso` checks a release ISO's contents. Design, threat model
->   and remaining limits: `docs/decisions/0002-release-integrity.md`.
-> - **Next:** recovery integrity (rollback interruption, snapshot-boot rollback, retention, GRUB config safety,
->   durable operation records). Then the experience layer. AI is later and optional.
+> - **Merged 2026-11-08 (PR #3, 9bc1f25):** release integrity. `publish-repo.sh` verifies the exact upload set
+>   against the production key committed at `origin/master`, is a dry run unless given `--publish OWNER/REPO`, and
+>   orders and byte-checks the upload. `verify-release.sh iso` checks a release ISO's contents. Design and remaining
+>   limits: `docs/decisions/0002-release-integrity.md`.
+> - **Design approved with revisions (2026-11-08):** recovery integrity, `docs/decisions/0003-recovery-integrity.md`. None of its failure
+>   classes is reproduced yet; each has a VM case. Not implemented. After it: the experience layer. AI is later and optional.
 > - **Still not release-ready:** no production-key build since 2026-09-28, no real hardware, LUKS/BIOS/dual boot/
 >   Secure Boot unsupported. The production signing key is only on the Windows/WSL machine; this Linux host has none.
 >
@@ -147,7 +147,7 @@ Setup that exists on the owner's machine:
 - [x] VM disks and ISOs ignored by Git
 - [x] `docs/known-issues.md` reconciled with section 1 above
 - [x] package repo published (GitHub release `repo`, 2026-09-28; published before the gate below existed)
-- [ ] publish gate merged (`fix/torchos-release-integrity`). After that, publish only with
+- [x] publish gate merged (PR #3, 2026-11-08). Publish only with
       `image/scripts/publish-repo.sh` (dry run) and then `--publish VectorSophie/TorchOS`, on the machine that holds the production key
 - [ ] release ISO passes `image/scripts/verify-release.sh iso <iso>` (production keyring, no dev SSH/markers)
 - [ ] bump `pkgver`/`pkgrel` before the next publish: production serves `*-0.2.0-1`, and the gate refuses to replace a

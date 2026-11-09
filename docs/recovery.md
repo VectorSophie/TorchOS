@@ -12,7 +12,10 @@
    when it next starts, and records whether the rebooted system is the intended one (`verified`).
    **Until you reboot, `torchd` refuses installs, removals, upgrades, kernel installs and another rollback**:
    they would land in the system being replaced. A full disk can still make a rollback fail (it is refused
-   up front when Btrfs metadata space is low); it then reports exactly what state it left.
+   up front when Btrfs metadata space is low, or when the space check itself cannot run); it then reports exactly
+   what state it left. If the journal cannot be read, or has a damaged line that is not an interrupted last write,
+   `torchd` keeps running but refuses rollbacks and says why: inspect the file, check `btrfs subvolume list /` for
+   `@.torchd-*` subvolumes, then move the journal aside.
    *Verified across a real reboot and injected power cuts:* `docs/decisions/0003-recovery-integrity.md` §7.
 4. **Undo a rollback / reclaim space:** the previous root is kept as `@.torchd-<op>.prev` (or `@.pre-rollback-*`
    from older versions) on the top-level filesystem. Delete it once you are sure: mount `subvolid=5`,
@@ -21,7 +24,7 @@
    kernel added with `torch kernel add`, plus fallback initramfs images). *TorchOS snapshots* (last entry) lists
    every snapshot; pick one, then a kernel. The snapshot boots on a **temporary overlay**: the desktop works and
    you can write files, but every change vanishes at the next reboot. `torch doctor` says which snapshot you are
-   in. To keep that state, run `torch snapshot rollback <N>` from inside it and reboot.
+   in. To keep that state, run `torch snapshot rollback <N>` from inside it and reboot. **Known defect:** this currently fails with "cannot determine the root device" (`docs/decisions/0003-recovery-integrity.md` R1); until it is fixed, reboot normally and run `torch snapshot rollback <N>` from the regular system.
    *Verified:* a pre-change snapshot booted, the later change was absent, writes were gone after a normal reboot.
 
 Snapshots are **not backups**: they live on the same disk. Layout and rationale: `docs/decisions/btrfs-layout.md`.
