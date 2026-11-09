@@ -18,8 +18,12 @@
    `@.torchd-*` subvolumes, then move the journal aside.
    *Verified across a real reboot and injected power cuts:* `docs/decisions/0003-recovery-integrity.md` §7.
 4. **Undo a rollback / reclaim space:** the previous root is kept as `@.torchd-<op>.prev` (or `@.pre-rollback-*`
-   from older versions) on the top-level filesystem. Delete it once you are sure: mount `subvolid=5`,
-   `btrfs subvolume delete <name>`. Automatic pruning (keep the two newest) is planned (R-E).
+   from older versions) on the top-level filesystem. Delete it only **after** you have rebooted into the new
+   system and it works: until then it is the running system and your only way back. Before deleting, check that
+   its UUID (`btrfs subvolume show`) is not the one `btrfs subvolume show /` reports. Never delete a
+   `@.torchd-<op>.new` by hand: after an interrupted rollback it can hold the previous system; `torchd` removes the
+   ones it can prove are spare copies. To delete: mount `subvolid=5`, `btrfs subvolume delete <name>`. Automatic
+   pruning (keep the two newest) is planned (R-E).
 5. **System will not boot:** in the GRUB menu, *Advanced options* offers the other kernels (`linux-lts`, any
    kernel added with `torch kernel add`, plus fallback initramfs images). *TorchOS snapshots* (last entry) lists
    every snapshot; pick one, then a kernel. The snapshot boots on a **temporary overlay**: the desktop works and

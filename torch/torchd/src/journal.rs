@@ -3,8 +3,8 @@
 //!
 //! Damage handling. A crash or a short write (ENOSPC on the shared filesystem) can leave an unterminated last
 //! line. That record was never confirmed to its writer, so nothing relied on it; the reader skips it, and the next
-//! `append` terminates it and writes a `repair` record right after it, so it stays recognisable as a repaired torn
-//! tail. Any other unparseable line is reported in `Journal::corrupt`: callers fail closed on it instead of
+//! `append` terminates it and writes a `repair` record right after it, naming the torn line's length, so it stays
+//! recognisable as that repaired torn tail and nothing else. Any other unparseable line is reported in `Journal::corrupt`: callers fail closed on it instead of
 //! carrying on as if the record never existed. A journal that cannot be read is an error, never an empty list.
 use anyhow::{Context, Result};
 use std::fs::OpenOptions;
@@ -17,7 +17,8 @@ pub const PATH: &str = "/var/log/torchd/journal.jsonl";
 pub struct Journal {
     /// Every readable record, in order.
     pub records: Vec<serde_json::Value>,
-    /// 1-based numbers of unreadable lines that are not a torn tail (repaired or current).
+    /// 1-based numbers of unreadable lines that are not a torn tail (current, or repaired: followed by a repair
+    /// record whose `torn_bytes` equals the line's length).
     pub corrupt: Vec<usize>,
 }
 
@@ -40,7 +41,9 @@ pub fn append(path: &str, record: &serde_json::Value) -> Result<()> {
         let mut last = [0u8];
         f.read_exact_at(&mut last, len - 1).context("reading the journal's last byte")?;
         if last[0] != b'\n' {
-            buf.extend(b"\n{\"kind\":\"repair\",\"repair\":\"torn-tail\"}\n");
+            // torn_bytes ties the marker to the exact line it terminates (the reader checks the length)
+            let tail = torn_len(&f, len).context("reading the journal's torn tail")?;
+            buf.extend(format!("\n{}\n", serde_json::json!({"kind": "repair", "repair": "torn-tail", "torn_bytes": tail})).into_bytes());
         }
     }
     buf.extend(record.to_string().into_bytes());
@@ -48,6 +51,13 @@ pub fn append(path: &str, record: &serde_json::Value) -> Result<()> {
     (&f).write_all(&buf).context("writing journal record")?;
     f.sync_data().context("fdatasync journal")?;
     Ok(())
+}
+
+/// Length of the unterminated last line of a `len`-byte journal (rare path: reads the whole file).
+fn torn_len(f: &std::fs::File, len: u64) -> Result<u64> {
+    let mut b = vec![0u8; len as usize];
+    f.read_exact_at(&mut b, 0)?;
+    Ok(b.iter().rposition(|c| *c == b'\n').map_or(len, |i| len - i as u64 - 1))
 }
 
 /// Read the journal. A missing file is an empty journal; any other read failure is an error.
@@ -70,7 +80,9 @@ fn parse(bytes: &[u8]) -> Journal {
         match rec {
             Some(v) => j.records.push(v.clone()),
             None if line.iter().all(u8::is_ascii_whitespace) => {}
-            None if parsed.get(i + 1).and_then(Option::as_ref).is_some_and(|n| n["kind"] == "repair") => {}
+            None if parsed.get(i + 1).and_then(Option::as_ref).is_some_and(|n| {
+                n["kind"] == "repair" && n["torn_bytes"].as_u64() == Some(line.len() as u64)
+            }) => {}
             None => j.corrupt.push(i + 1),
         }
     }
@@ -130,6 +142,42 @@ mod tests {
         let j = read(&p).unwrap();
         assert_eq!(j.records.len(), 2);
         assert_eq!(j.corrupt, vec![2]);
+    }
+
+    #[test]
+    fn a_repair_excuses_only_the_torn_line_it_terminated() {
+        // A corrupt confirmed record elsewhere stays corrupt even when a torn tail is repaired later.
+        let p = tmp();
+        raw(&p, b"{\"op_id\":\"a\",\"kind\":\"intent\"}\n{garb\n{\"op_id\":\"a\",\"kind\":\"step\"}\n{\"op_id\":\"b\",\"ki");
+        append(&p, &json!({"op_id": "c", "kind": "intent"})).unwrap();
+        assert_eq!(read(&p).unwrap().corrupt, vec![2]);
+        // Damage that merges a confirmed record into the torn line (its newline lost) is not "the torn line":
+        // the repair names how many bytes it terminated, so the merged line does not match.
+        let p = tmp();
+        append(&p, &json!({"op_id": "a", "kind": "intent"})).unwrap();
+        append(&p, &json!({"op_id": "a", "kind": "step", "step": "created"})).unwrap();
+        raw(&p, b"{\"op_id\":\"b\",\"ki");
+        append(&p, &json!({"op_id": "c", "kind": "intent"})).unwrap();
+        let mut b = std::fs::read(&p).unwrap();
+        let first_nl = b.iter().position(|c| *c == b'\n').unwrap();
+        let second_nl = first_nl + 1 + b[first_nl + 1..].iter().position(|c| *c == b'\n').unwrap();
+        b[second_nl] = b'#'; // the `created` record's newline is damaged
+        std::fs::write(&p, &b).unwrap();
+        let j = read(&p).unwrap();
+        assert_eq!(j.corrupt, vec![2], "the lost `created` record must be reported, not excused by the repair");
+    }
+
+    #[test]
+    fn a_repair_write_torn_after_its_newline_fails_closed() {
+        // Two short writes in a row (ENOSPC): the first leaves a torn line, the second gets only its leading "\n"
+        // out. Nothing marks the line as torn any more, so it is reported (operator review), never dropped silently.
+        let p = tmp();
+        append(&p, &json!({"op_id": "a", "kind": "intent"})).unwrap();
+        raw(&p, b"{\"op_id\":\"b\",\"ki\n");
+        append(&p, &json!({"op_id": "c", "kind": "intent"})).unwrap();
+        let j = read(&p).unwrap();
+        assert_eq!(j.corrupt, vec![2]);
+        assert_eq!(j.records.len(), 2);
     }
 
     #[test]

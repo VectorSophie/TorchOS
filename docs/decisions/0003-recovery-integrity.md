@@ -248,8 +248,10 @@ the reverse (a step ran, its record was lost) is handled by reconciling against 
 
 Damage (R-A follow-up review). A crash or a short write (ENOSPC on the shared filesystem) can leave an unterminated
 last line. Its writer never saw it succeed, so nothing relied on it: the reader skips it, and the next append
-terminates it and writes a `{"kind":"repair","repair":"torn-tail"}` record after it, in the same write, so the line
-stays recognisable. Any other unreadable line is *corrupt*; a journal that cannot be read at all (EIO, EACCES) is an
+terminates it and writes a `{"kind":"repair","repair":"torn-tail","torn_bytes":N}` record after it, in the same
+write; the reader excuses only the line just before it, and only if that line is exactly N bytes (damage that merged
+a confirmed record into the torn line is corrupt, not torn). A second short write that gets out only the separating
+newline leaves the torn line unmarked: it is then reported as corrupt (fail closed, operator review). Any other unreadable line is *corrupt*; a journal that cannot be read at all (EIO, EACCES) is an
 error, never an empty journal. In both cases `torchd` keeps serving (the pending refusal is observed from disk, not
 from the journal) but refuses rollbacks and reports the line numbers; the operator inspects the file and the
 `@.torchd-*` subvolumes, then moves the journal aside. Reconciliation never deletes or renames a subvolume that no

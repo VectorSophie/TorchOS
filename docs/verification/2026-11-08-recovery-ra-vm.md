@@ -87,6 +87,25 @@ torch-cli. `verify-release.sh repo` accepts the signed normal repo, and refuses 
 replaced by the fault build ("torchd is a fault-injection (development) build"). The ISO check against a real ISO
 was not re-run; it is covered by the synthetic ISO cases in `release-integrity-scenario.sh` (44/44).
 
+## Independent review (2026-11-09, after PR #5 merged)
+
+Results above this section are from earlier commits (4d09a3d, ba9b408) and are kept as recorded.
+
+| Finding | Severity | Minimal reproduction (before the fix) | Fix |
+|---|---|---|---|
+| A repair marker excused whatever line preceded it | Low on TorchOS (needs damage that Btrfs data checksums would turn into EIO), but it silently dropped a confirmed record | journal: `intent`, `created`, torn tail; append repairs it; the `created` record's newline is damaged so it merges into the torn line. The reader returned `corrupt: []`, and `created` disappeared | the repair record carries `torn_bytes`; the reader excuses only a preceding line of exactly that length (`journal.rs`) |
+| `docs/recovery.md` step 4 allowed deleting the previous root while a rollback was pending, and did not warn about `.new` | Medium (operator instructions; could remove the only fallback) | "Delete it once you are sure" named `@.torchd-<op>.prev`, which is the running system until the reboot | only after the new system boots; check its UUID is not the running root's; never delete `.new` by hand |
+
+Checked and not a defect: a corrupt record elsewhere stays corrupt when a later torn tail is repaired (test). A
+second short write that gets out only the repair's leading newline leaves the torn line unmarked; it is reported
+as corrupt (fail closed, operator review), not dropped (test). Journal file creation and the parent directory: no
+directory fsync, but not material. The first change on disk after the intent is `btrfs subvolume snapshot`, which
+commits a whole transaction on the same filesystem, including the journal's directory entry. A cut before it loses
+at most an intent with no effect on disk, and `syncfs` runs again before "prepared".
+
+On the final commit: `cargo test -p torchd` 36/36 with and without `fault-injection`, clippy clean in both; VM
+cases J1 and J5 re-run (journal format changed): **PASS, 37 checks, 0 failed** (incl. the release/fault build-marker checks). On the real VM, J1's repair record matched its torn line (no startup error).
+
 ## Not observed / remaining crash states
 
 - **An unsynced exchange that is lost at the cut.** F0-b and F4 both found the exchange already committed. The
