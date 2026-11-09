@@ -25,7 +25,8 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 | BIOS install, LUKS, manual partitioning, dual boot, Secure Boot | unsupported / untested; the installer is designed to refuse the first four (not yet VM-verified, below) |
 | real hardware, NVIDIA, suspend/resume | untested |
 | hosted package repo (GitHub release `repo`) | PUBLISHED, pacman sync + signature VERIFIED |
-| rollback crash safety, rollback from a booted snapshot, `grub.cfg` replacement, retention | **known defects, not reproduced yet**: `docs/decisions/0003-recovery-integrity.md` (R1-R8) |
+| rollback crash safety (R2, R8) | **fixed by R-A** (atomic exchange, journal, reconciliation, pending refusal); VM fault-injected: `docs/verification/2026-11-08-recovery-ra-vm.md` |
+| rollback from a booted snapshot, `grub.cfg` replacement, retention | **known defects**: `docs/decisions/0003-recovery-integrity.md` (R1, R3-R7; R-B to R-E) |
 | publishing gate (`publish-repo.sh` verifies the production key at origin/master; dry run by default) | merged (PR #3, 2026-11-08); container-tested with a mock backend; read-only check of the live repo OK; never published through |
 
 ## Installer: what it accepts

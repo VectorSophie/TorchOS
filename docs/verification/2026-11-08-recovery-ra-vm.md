@@ -49,6 +49,44 @@ copied over `/usr/bin/torchd` on the overlay only. The release build was checked
 All cases: `@home`, `@log`, `@snapshots` keep their UUIDs; the `/home` and `@log` probes are intact; the booted
 root is the subvolume named `@`.
 
+## Follow-up review (2026-11-09): journal damage, preflight, reporting, real packages
+
+Each defect was reproduced first against `4d09a3d` (unit tests on the old code, `cargo test`: 3 of 4 repro tests
+failed, the fourth passing *is* the defect):
+
+| Defect | Minimal reproduction on `4d09a3d` |
+|---|---|
+| A torn last line swallowed the next record | append `{"op_id":"a"}`, write `{"op_id":"b","ki` with no newline, append intent `c`: `read` returns only `a`; intent `c` is gone |
+| One invalid UTF-8 byte emptied the journal | a journal with one line containing `\xc3`: `read` returns `[]`, every open op disappears |
+| An unreadable journal read as empty | journal path is a directory (stands in for EIO/EACCES): `read` returns `[]`, no error |
+| The space preflight failed open | `metadata_headroom("")` (usage failed or unparseable) is `None`; `room.is_some_and(< floor)` is false, so the rollback proceeded |
+| Reconcile errors did not stop a rollback | `apply` failures went to notes and `Ok`; a journal append failure aborted the loop for every later op |
+| A failed `created` record left the copy behind | the rollback returned an error without removing the copy it had just made |
+
+`btrfs filesystem usage -b /.snapshots` on the installed VM (btrfs-progs v7.3) prints `Device unallocated`,
+`Metadata ratio: 2.00`, `Global reserve: 12189696 (used: 0)` and `Metadata,DUP: Size:268435456, Used:145915904`. It
+exits 1 with `ERROR: cannot access` on a bad path. The parser and its unit fixture use that exact text.
+
+VM (`recovery-ra.sh`, all cases re-run after the journal/reconciliation changes): **PASS, 252 checks, 0 failed.**
+F1-F5, F12, F14, F13 and F13b gave the same results as before (F4: the exchange was again committed before the cut).
+New cases:
+
+| Case | Injected | Observed |
+|---|---|---|
+| J1 | torn last journal line, then a crash after `intent` | old root; the new intent survived (`recovered-not-applied`); `repair` record after the torn line; no startup error |
+| J2 | `created` record write fails | refused, "nothing was changed (the copy was removed)"; `@`=U0; no `@.torchd-*`; outcome `failed` |
+| J3 | `exchanged` and `prepared` record writes fail | rc 0, "committed to disk and NOT fully recorded in the journal (exchanged: …; prepared: …)"; pending refusal still holds; after reboot `recovered-prepared` → `verified`, `.prev`=U0 |
+| J4 | `intent` write fails | refused, nothing changed, no `@.torchd-*` |
+| J5 | corrupt middle line | torchd starts and serves; startup logs the line number; rollback refused (`@` unchanged); after the operator moves the journal aside, rollback works and is verified |
+| J6 | journal unreadable (a directory) | torchd starts and serves; startup logs the error; rollback refused, nothing changed |
+
+Real packages (`image/tests/package-guard-scenario.sh`, disposable container, throwaway key, nothing published):
+**10/10**. makepkg builds the normal split package, and its torchd has no marker. The same PKGBUILD with
+`--features torchd/fault-injection` fails in `package_torch-cli()` ("refusing to package it"), producing no
+torch-cli. `verify-release.sh repo` accepts the signed normal repo, and refuses it once torch-cli's torchd is
+replaced by the fault build ("torchd is a fault-injection (development) build"). The ISO check against a real ISO
+was not re-run; it is covered by the synthetic ISO cases in `release-integrity-scenario.sh` (44/44).
+
 ## Not observed / remaining crash states
 
 - **An unsynced exchange that is lost at the cut.** F0-b and F4 both found the exchange already committed. The
