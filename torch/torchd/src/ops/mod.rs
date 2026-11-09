@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 
 pub mod kernel;
 pub mod package;
+pub mod recovery;
 pub mod service;
 pub mod snapshot;
 
@@ -25,7 +26,7 @@ pub fn describe(op: &str, args: &serde_json::Value) -> String {
     let s = |k: &str| args[k].as_str().unwrap_or("?").to_string();
     match op {
         "snapshot.rollback" => format!(
-            "Roll the system back to snapshot {}? /home is kept; the current system is kept as @.pre-rollback-*. Takes effect on reboot.",
+            "Roll the system back to snapshot {}? /home is kept; the current system is kept as @.torchd-<op>.prev. Takes effect on reboot; until then package, upgrade and kernel operations are refused.",
             s("snapshot_id")
         ),
         "service.restart" => format!("Restart the service {}?", s("name")),
