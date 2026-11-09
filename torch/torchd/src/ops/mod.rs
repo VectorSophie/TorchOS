@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 
+pub mod grubcfg;
 pub mod kernel;
 pub mod package;
 pub mod recovery;

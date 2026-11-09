@@ -27,6 +27,11 @@ pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+fault-injection")
 pub const FAULT_MARKER: &str = "TORCHD-FAULT-INJECTION-BUILD";
 
 fn main() -> Result<()> {
+    // Development-only entry for the R-D VM cases: regenerate grub.cfg directly, so a fault point can pause it.
+    #[cfg(feature = "fault-injection")]
+    if std::env::args().nth(1).as_deref() == Some("grub-regenerate") {
+        return ops::grubcfg::regenerate().map(|()| println!("grub.cfg regenerated"));
+    }
     std::fs::create_dir_all(SOCKET_DIR).with_context(|| format!("creating {SOCKET_DIR}"))?;
     let _ = std::fs::remove_file(SOCKET_PATH);
     let listener =
@@ -58,6 +63,8 @@ fn main() -> Result<()> {
         }
         Err(e) => eprintln!("reconcile error: {e:#}"),
     }
+    // Repair a boot menu an interrupted writer left damaged (R-D). Never fatal.
+    ops::grubcfg::startup_check().iter().for_each(|n| println!("grub: {n}"));
     println!("torchd {VERSION} listening on {SOCKET_PATH}");
     // ponytail: one client at a time; ops are long (pacman) and must not interleave anyway.
     let mut tokens = tokens::Tokens::default();

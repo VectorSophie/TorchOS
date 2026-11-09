@@ -26,7 +26,8 @@ The authoritative summary is `docs/handoff.md`; this file is the per-item table.
 | real hardware, NVIDIA, suspend/resume | untested |
 | hosted package repo (GitHub release `repo`) | PUBLISHED, pacman sync + signature VERIFIED |
 | rollback crash safety (R2, R8) | **fixed by R-A** (atomic exchange, journal, reconciliation, pending refusal); VM fault-injected: `docs/verification/2026-11-08-recovery-ra-vm.md` |
-| rollback from a booted snapshot, `grub.cfg` replacement, retention | **known defects**: `docs/decisions/0003-recovery-integrity.md` (R1, R3-R7; R-B to R-E) |
+| `grub.cfg` replacement, snapshot menu after an interrupted regeneration (R5) | **fixed by R-D (in review)** for `torch kernel add`: validated candidate, atomic rename, `grub.cfg.prev`, startup repair; `docs/verification/2026-11-09-recovery-rd-vm.md`. A hand-run `grub-mkconfig` still writes in place |
+| rollback from a booted snapshot, retention | **known defects**: `docs/decisions/0003-recovery-integrity.md` (R1, R3, R4, R6, R7; R-B, R-C, R-E) |
 | publishing gate (`publish-repo.sh` verifies the production key at origin/master; dry run by default) | merged (PR #3, 2026-11-08); container-tested with a mock backend; read-only check of the live repo OK; never published through |
 
 ## Installer: what it accepts

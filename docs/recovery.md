@@ -30,5 +30,11 @@
    you can write files, but every change vanishes at the next reboot. `torch doctor` says which snapshot you are
    in. To keep that state, run `torch snapshot rollback <N>` from inside it and reboot. **Known defect:** this currently fails with "cannot determine the root device" (`docs/decisions/0003-recovery-integrity.md` R1); until it is fixed, reboot normally and run `torch snapshot rollback <N>` from the regular system.
    *Verified:* a pre-change snapshot booted, the later change was absent, writes were gone after a normal reboot.
+6. **GRUB shows only a `grub>` prompt** (no menu): `grub.cfg` is empty or damaged. `torch kernel add` never
+   leaves it that way (it installs a checked configuration with one atomic rename and keeps the previous one as
+   `grub.cfg.prev`), but a hand-run `grub-mkconfig` cut off by a power loss can. At the prompt, type
+   `configfile /@/boot/grub/grub.cfg.prev` (*not yet verified in the VM*). Once the system is up, `torchd` puts
+   `grub.cfg.prev` back as `grub.cfg` by itself. If the snapshot menu is missing after a crash, `torchd`
+   regenerates it when it starts.
 
 Snapshots are **not backups**: they live on the same disk. Layout and rationale: `docs/decisions/btrfs-layout.md`.
